@@ -113,7 +113,7 @@ with tab3:
 
 # --- TAB 4: FRIDGE QR CODE ---
 with tab4:
-    app_url = st.text_input("Paste your public Streamlit URL here:", "https://your-app.streamlit.app")
+    app_url = st.text_input("Paste your public Streamlit URL here:", "https://cbecbczmjofch87t5gmwuf.streamlit.app/")
     if app_url:
         qr = qrcode.make(app_url)
         buf = io.BytesIO()
