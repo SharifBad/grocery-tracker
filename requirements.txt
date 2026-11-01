@@ -1,5 +1,5 @@
 streamlit
-google-genai
+google-genai>=1.15.0
 gspread
 google-auth
 pandas
