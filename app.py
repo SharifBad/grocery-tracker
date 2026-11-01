@@ -54,7 +54,7 @@ with tab1:
             """
             file_bytes = uploaded_file.getvalue()
             file_part = types.Part.from_bytes(data=file_bytes, mime_type=uploaded_file.type)
-            
+
             response = None
             last_error = None
             for model_name in ["gemini-3.8-flash", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"]:
@@ -68,21 +68,21 @@ with tab1:
                 except Exception as e:
                     last_error = e
                     continue
-                    
+
             if response is None:
                 st.error(f"All Gemini servers are busy right now. Please click Scan again in 10 seconds. (Details: {last_error})")
                 st.stop()
-            
+
             data = json.loads(response.text)
             try:
                 dt = datetime.datetime.strptime(data.get("date", ""), "%Y-%m-%d")
             except ValueError:
                 dt = datetime.datetime.today()
                 data["date"] = dt.strftime("%Y-%m-%d")
-                
+
             week_str = f"{dt.year}-W{dt.isocalendar()[1]:02d}"
             month_str = dt.strftime("%Y-%m")
-            
+
             rows = [
                 [
                     data["date"],
@@ -118,4 +118,29 @@ with tab2:
 with tab3:
     all_values = sheet.get_all_values()
     if len(all_values) > 1:
-        headers = [h.strip()
+        headers = [h.strip() for h in all_values[0]]
+        df = pd.DataFrame(all_values[1:], columns=headers)
+        df["Price"] = pd.to_numeric(df["Price"], errors="coerce").fillna(0)
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("By Month")
+            st.dataframe(df.groupby("Month")["Price"].sum().reset_index())
+        with col2:
+            st.subheader("By Week")
+            st.dataframe(df.groupby("Week")["Price"].sum().reset_index())
+
+        st.subheader("By Category")
+        st.bar_chart(df.groupby("Category")["Price"].sum())
+        st.dataframe(df.tail(15))
+    else:
+        st.info("No groceries logged yet.")
+
+# --- TAB 4: FRIDGE QR CODE ---
+with tab4:
+    app_url = st.text_input("Paste your public Streamlit URL here:", "https://cbecbczmjofch87t5gmwuf.streamlit.app/")
+    if app_url:
+        qr = qrcode.make(app_url)
+        buf = io.BytesIO()
+        qr.save(buf, format="PNG")
+        st.image(buf.getvalue(), caption="Print & stick on your fridge!", width=250)
