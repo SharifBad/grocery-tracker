@@ -40,39 +40,64 @@ with tab1:
     uploaded_file = st.file_uploader("Upload receipt (Photo or PDF)", type=["jpg", "jpeg", "png", "pdf"])
     if uploaded_file and st.button("Extract & Save with Gemini"):
         with st.spinner("Gemini is reading your receipt..."):
-            prompt = """
+            prompt = f"""
             Extract this grocery receipt into strict JSON format:
-            {
+            {{
               "date": "YYYY-MM-DD",
               "store": "Store Name",
               "receipt_total": 0.00,
               "items": [
-                {"name": "Item Name", "category": "Produce/Dairy/Meat/Bakery/Pantry/Household/Other", "price": 0.00}
+                {{"name": "Item Name", "category": "Produce/Dairy/Meat/Bakery/Pantry/Household/Other", "price": 0.00}}
               ]
-            }
-            If the date is missing, use today's date. Return ONLY valid JSON.
+            }}
+            If the date is missing, use today's date ({datetime.date.today().strftime('%Y-%m-%d')}). Return ONLY valid JSON.
             """
             file_bytes = uploaded_file.getvalue()
-            response = client.models.generate_content(
-                model="gemini-3.8-flash",
-                contents=[
-                    types.Part.from_bytes(data=file_bytes, mime_type=uploaded_file.type),
-                    prompt
-                ],
-                config=types.GenerateContentConfig(response_mime_type="application/json")
-            )
+            file_part = types.Part.from_bytes(data=file_bytes, mime_type=uploaded_file.type)
+            
+            response = None
+            last_error = None
+            for model_name in ["gemini-3.8-flash", "gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"]:
+                try:
+                    response = client.models.generate_content(
+                        model=model_name,
+                        contents=[file_part, prompt],
+                        config=types.GenerateContentConfig(response_mime_type="application/json")
+                    )
+                    break
+                except Exception as e:
+                    last_error = e
+                    continue
+                    
+            if response is None:
+                st.error(f"All Gemini servers are busy right now. Please click Scan again in 10 seconds. (Details: {last_error})")
+                st.stop()
             
             data = json.loads(response.text)
-            dt = datetime.datetime.strptime(data["date"], "%Y-%m-%d")
+            try:
+                dt = datetime.datetime.strptime(data.get("date", ""), "%Y-%m-%d")
+            except ValueError:
+                dt = datetime.datetime.today()
+                data["date"] = dt.strftime("%Y-%m-%d")
+                
             week_str = f"{dt.year}-W{dt.isocalendar()[1]:02d}"
             month_str = dt.strftime("%Y-%m")
             
             rows = [
-                [data["date"], data["store"], item["name"], item["category"], item["price"], week_str, month_str, data["receipt_total"]]
-                for item in data["items"]
+                [
+                    data["date"],
+                    data.get("store", "Unknown Store"),
+                    item.get("name", "Item"),
+                    item.get("category", "Other"),
+                    float(item.get("price", 0.0)),
+                    week_str,
+                    month_str,
+                    float(data.get("receipt_total", 0.0))
+                ]
+                for item in data.get("items", [])
             ]
             sheet.append_rows(rows)
-            st.success(f"Saved {len(rows)} items from {data['store']}!")
+            st.success(f"Saved {len(rows)} items from {data.get('store', 'receipt')}!")
 
 # --- TAB 2: MANUAL ENTRY ---
 with tab2:
@@ -93,29 +118,4 @@ with tab2:
 with tab3:
     all_values = sheet.get_all_values()
     if len(all_values) > 1:
-        headers = [h.strip() for h in all_values[0]]
-        df = pd.DataFrame(all_values[1:], columns=headers)
-        df["Price"] = pd.to_numeric(df["Price"], errors="coerce").fillna(0)
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.subheader("By Month")
-            st.dataframe(df.groupby("Month")["Price"].sum().reset_index())
-        with col2:
-            st.subheader("By Week")
-            st.dataframe(df.groupby("Week")["Price"].sum().reset_index())
-            
-        st.subheader("By Category")
-        st.bar_chart(df.groupby("Category")["Price"].sum())
-        st.dataframe(df.tail(15))
-    else:
-        st.info("No groceries logged yet.")
-
-# --- TAB 4: FRIDGE QR CODE ---
-with tab4:
-    app_url = st.text_input("Paste your public Streamlit URL here:", "https://cbecbczmjofch87t5gmwuf.streamlit.app/")
-    if app_url:
-        qr = qrcode.make(app_url)
-        buf = io.BytesIO()
-        qr.save(buf, format="PNG")
-        st.image(buf.getvalue(), caption="Print & stick on your fridge!", width=250)
+        headers = [h.strip()
