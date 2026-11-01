@@ -23,14 +23,11 @@ creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"],
 gc = gspread.authorize(creds)
 sheet = gc.open_by_url("https://docs.google.com/spreadsheets/d/1xTZYrQlT9lVTfv6IMMCSE5zViVq-O7PhYd4zFBX0scE/edit?gid=0#gid=0").sheet1
 
-# Auto-check and set headers in Row 1 if missing
+# Auto-check and set headers in Row 1 if missing (ignoring trailing empty columns)
 EXPECTED_HEADERS = ["Date", "Store", "Item", "Category", "Price", "Week", "Month", "Receipt Total"]
-current_headers = [h.strip() for h in sheet.row_values(1)]
+current_headers = [h.strip() for h in sheet.row_values(1)[:8]]
 if current_headers != EXPECTED_HEADERS:
-    if not current_headers:
-        sheet.append_row(EXPECTED_HEADERS)
-    else:
-        sheet.update(range_name="A1:H1", values=[EXPECTED_HEADERS])
+    sheet.update(range_name="A1:H1", values=[EXPECTED_HEADERS])
 
 st.title("🛒 Bibi's Grocery Tracker")
 
@@ -84,7 +81,6 @@ with tab1:
                     break
                 except Exception as e:
                     err_str = str(e)
-                    # Retry automatically if the server is busy (503) or rate-limited (429)
                     if "503" in err_str or "UNAVAILABLE" in err_str or "429" in err_str or "overloaded" in err_str.lower():
                         for sec in range(5, 0, -1):
                             progress_text.warning(
@@ -121,7 +117,7 @@ with tab1:
             ]
             for item in data.get("items", [])
         ]
-        sheet.append_rows(rows)
+        sheet.append_rows(rows, table_range="A1:H1")
         st.success(f"Saved {len(rows)} items from {data.get('store', 'receipt')}!")
 
 # --- TAB 2: MANUAL ENTRY ---
@@ -136,28 +132,36 @@ with tab2:
             d_str = m_date.strftime("%Y-%m-%d")
             w_str = f"{m_date.year}-W{m_date.isocalendar()[1]:02d}"
             mo_str = m_date.strftime("%Y-%m")
-            sheet.append_row([d_str, m_store, m_item, m_cat, m_price, w_str, mo_str, m_price])
+            sheet.append_row([d_str, m_store, m_item, m_cat, m_price, w_str, mo_str, m_price], table_range="A1:H1")
             st.success("Item added to Google Sheet!")
 
 # --- TAB 3: DASHBOARD (WEEKLY & MONTHLY TOTALS) ---
 with tab3:
     all_values = sheet.get_all_values()
     if len(all_values) > 1:
-        headers = [h.strip() for h in all_values[0]]
-        df = pd.DataFrame(all_values[1:], columns=headers)
-        df["Price"] = pd.to_numeric(df["Price"], errors="coerce").fillna(0)
+        # Keep only the first 8 columns (A through H) and filter out completely empty rows
+        cleaned_rows = [
+            (row + [""] * 8)[:8]
+            for row in all_values[1:]
+            if any(cell.strip() for cell in row[:8])
+        ]
+        if cleaned_rows:
+            df = pd.DataFrame(cleaned_rows, columns=EXPECTED_HEADERS)
+            df["Price"] = pd.to_numeric(df["Price"], errors="coerce").fillna(0)
 
-        col1, col2 = st.columns(2)
-        with col1:
-            st.subheader("By Month")
-            st.dataframe(df.groupby("Month")["Price"].sum().reset_index())
-        with col2:
-            st.subheader("By Week")
-            st.dataframe(df.groupby("Week")["Price"].sum().reset_index())
+            col1, col2 = st.columns(2)
+            with col1:
+                st.subheader("By Month")
+                st.dataframe(df.groupby("Month")["Price"].sum().reset_index())
+            with col2:
+                st.subheader("By Week")
+                st.dataframe(df.groupby("Week")["Price"].sum().reset_index())
 
-        st.subheader("By Category")
-        st.bar_chart(df.groupby("Category")["Price"].sum())
-        st.dataframe(df.tail(15))
+            st.subheader("By Category")
+            st.bar_chart(df.groupby("Category")["Price"].sum())
+            st.dataframe(df.tail(15))
+        else:
+            st.info("No groceries logged yet.")
     else:
         st.info("No groceries logged yet.")
 
