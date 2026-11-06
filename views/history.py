@@ -12,18 +12,57 @@ import streamlit as st
 
 from grocery import db
 from grocery.auth import current_user
-from grocery.ui import database_errors, flash, month_picker, receipt_editor, store_options
-from grocery.utils import item_key, month_bounds, pretty_month
+from grocery.ui import database_errors, euro, flash, month_picker, receipt_editor, store_options
+from grocery.utils import canonical_store, item_key, month_bounds, month_label, pretty_month
 
 log = logging.getLogger(__name__)
 SELECTED = "history_selected"  # id of the receipt being viewed
 REV = "history_rev"  # bumped after a save/delete to reset the table and editor
+SEARCH_HITS = "_history_search_hits"  # (receipt_id, month) per search result row
 
 st.title("🧾 Receipt history")
 flash()
 
+def open_from_search():
+    """A search result was tapped: show its month and open that receipt (runs before the rerun)."""
+    rows = (st.session_state.get("history_search_results") or {}).get("selection", {}).get("rows", [])
+    hits = st.session_state.get(SEARCH_HITS, [])
+    if rows and rows[0] < len(hits):
+        receipt_id, month = hits[rows[0]]
+        st.session_state["history_month"] = month
+        st.session_state[SELECTED] = receipt_id
+        st.session_state["history_table"] = None  # a fresh table, not a deselection
+        st.session_state["history_search"] = ""
+
+
+def search(item_lines, query):
+    """Every item whose name, store or category matches `query`, across all months."""
+    q = item_key(query)
+    store_q = canonical_store(query).casefold()
+    hits = item_lines[
+        item_lines["name"].map(lambda n: q in item_key(n))
+        | item_lines["store"].map(lambda s: q in item_key(s) or store_q == str(s).casefold())
+        | item_lines["category"].map(lambda c: q in item_key(c))
+    ].sort_values("purchased_on", ascending=False)
+    st.caption(f"{len(hits)} item{'s' if len(hits) != 1 else ''} · {euro(hits['price'].sum())} in total. "
+               "Tap a row to open that receipt.")
+    st.session_state[SEARCH_HITS] = [(r, month_label(d)) for r, d in zip(hits["receipt_id"], hits["purchased_on"])]
+    st.dataframe(
+        hits[["purchased_on", "store", "name", "category", "price", "uploaded_by"]],
+        hide_index=True, width="stretch", on_select=open_from_search, selection_mode="single-row",
+        key="history_search_results",
+        column_config={"purchased_on": "Date", "store": "Store", "name": "Item", "category": "Category",
+                       "price": st.column_config.NumberColumn("Price (€)", format="€%.2f"), "uploaded_by": "Added by"},
+    )
+
+
 with database_errors("load your receipts"):
     item_lines = db.load_item_lines()
+query = st.text_input("🔍 Search all receipts", key="history_search", placeholder="Item, store or category, e.g. Katzenfutter")
+if query.strip():
+    search(item_lines, query)
+    st.stop()
+with database_errors("load your receipts"):
     month = month_picker(item_lines, key="history_month")
     receipts = db.load_receipts(*month_bounds(month))
 if not receipts:
