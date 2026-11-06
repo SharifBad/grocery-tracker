@@ -1,3 +1,5 @@
+import datetime
+
 from helpers import CODE, make_app, no_exc
 
 from grocery import auth
@@ -29,13 +31,29 @@ def test_name_and_code_are_forgiving_about_case_and_spaces(store):
     at = sign_in(no_exc(make_app().run()), "  bibi ", "  LEMON Tiger 47 ")
     no_exc(at)
     assert at.session_state["user"] == "Bibi" and at.title[0].value == "📸 Add a receipt"
-    assert any("Signed in as **Bibi**" in c.value for c in at.sidebar.caption)
 
 
-def test_sign_out(store):
-    at = no_exc(make_app(user="Bibi").run())
-    next(b for b in at.sidebar.button if b.label == "Sign out").click().run()
-    assert on_sign_in_page(at) and "user" not in at.session_state
+def test_sign_out_forgets_everything(store):
+    at = make_app(user="Bibi")
+    at.session_state["draft_no"] = 1
+    at.session_state["draft"] = {"purchased_on": datetime.date(2026, 11, 3), "date_guessed": False, "store": "REWE",
+                                 "total": 1.0, "items": [{"name": "X", "category": "Other", "price": 1.0}],
+                                 "file": None, "mime": None, "filename": None}
+    at.session_state["photo"] = {"kind": "pdf", "file_id": "f", "name": "r.pdf", "data": b"%PDF"}
+    no_exc(at.run())
+    next(b for b in at.button if b.label == "Sign out").click().run()
+    assert on_sign_in_page(at)
+    assert "user" not in at.session_state and "draft" not in at.session_state and "photo" not in at.session_state
+
+
+def test_wrong_attempts_slow_down_progressively(monkeypatch):
+    slept = []
+    monkeypatch.setattr(auth.time, "sleep", slept.append)
+    auth._recent_failures().clear()
+    for _ in range(12):
+        slept.append(auth._failure_delay())
+    assert slept[0] == 1 and slept[-1] > slept[0] and max(slept) <= 10
+    auth._recent_failures().clear()
 
 
 def test_changing_the_code_signs_everyone_out(store):
@@ -55,3 +73,4 @@ def test_missing_setup_is_explained():
     for kwargs in ({"family": None}, {"code": None}, {"code": "   "}):
         at = no_exc(make_app(**kwargs).run())
         assert any("isn't set up yet" in e.value for e in at.error), kwargs
+

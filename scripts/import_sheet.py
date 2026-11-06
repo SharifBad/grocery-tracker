@@ -9,6 +9,9 @@ Run from the repo root after creating the schema (supabase/schema.sql):
 Reads .streamlit/secrets.toml for gcp_service_account, SUPABASE_URL and SUPABASE_SERVICE_KEY.
 Consecutive sheet rows with the same date, store and receipt total become one receipt
 (scanned receipts were appended together). Imported receipts get uploaded_by = "sheet-import".
+
+Safe to re-run: receipts that were already imported (same date, store, total and number of
+items) are skipped, so an interrupted import can simply be started again.
 """
 import argparse
 import datetime
@@ -22,7 +25,7 @@ sys.path.insert(0, str(ROOT))
 
 from supabase import create_client  # noqa: E402
 
-from grocery.utils import normalize_category, to_money  # noqa: E402
+from grocery.utils import normalize_category, parse_money  # noqa: E402
 
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1xTZYrQlT9lVTfv6IMMCSE5zViVq-O7PhYd4zFBX0scE/edit"
 IMPORT_USER = "sheet-import"
@@ -57,12 +60,17 @@ def parse_rows(values):
         except ValueError:
             print(f"  skipping row with bad date: {raw}")
             continue
+        price_value, total_value = parse_money(price), parse_money(total) if total else None
+        if price_value is None:
+            print(f"  WARNING: unreadable price {price!r} for {item!r} on {date_s}; imported as 0.00, fix it in History")
+        if total and total_value is None:
+            print(f"  WARNING: unreadable receipt total {total!r} on {date_s}; imported without a total")
         rows.append(
             {
                 "purchased_on": purchased_on,
                 "store": store or "Unknown Store",
-                "total": to_money(total) if total else None,
-                "item": {"name": item or "Item", "category": normalize_category(category), "price": to_money(price)},
+                "total": total_value,
+                "item": {"name": item or "Item", "category": normalize_category(category), "price": price_value or 0.0},
             }
         )
     return rows
@@ -93,14 +101,33 @@ def main():
         return
 
     sb = create_client(secrets["SUPABASE_URL"], secrets["SUPABASE_SERVICE_KEY"])
-    existing = sb.table("receipts").select("id", count="exact").eq("uploaded_by", IMPORT_USER).limit(1).execute()
-    if existing.count:
-        sys.exit(f"Aborting: {existing.count} receipts from a previous import already exist.")
-
+    already = {fingerprint(r) for r in existing_imports(sb)}
+    imported = skipped = 0
     for receipt, items in receipts:
+        if fingerprint({**receipt, "items": items}) in already:
+            skipped += 1
+            continue
         payload = {**receipt, "purchased_on": receipt["purchased_on"].isoformat()}
         sb.rpc("save_receipt", {"p_receipt": payload, "p_items": items, "p_user": IMPORT_USER, "p_id": None}).execute()
-    print("Imported.")
+        imported += 1
+    print(f"Imported {imported} receipts; skipped {skipped} already imported.")
+
+
+def fingerprint(receipt):
+    """What identifies an imported receipt: date, store, total and number of items."""
+    total = None if receipt["total"] is None else round(float(receipt["total"]), 2)
+    return (str(receipt["purchased_on"]), receipt["store"], total, len(receipt["items"]))
+
+
+def existing_imports(sb):
+    rows, start = [], 0
+    while True:
+        batch = (sb.table("receipts").select("purchased_on, store, total, items(id)").eq("uploaded_by", IMPORT_USER)
+                 .order("id").range(start, start + 999).execute().data)
+        rows.extend(batch)
+        if len(batch) < 1000:
+            return rows
+        start += 1000
 
 
 if __name__ == "__main__":

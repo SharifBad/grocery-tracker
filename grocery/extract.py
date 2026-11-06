@@ -11,12 +11,14 @@ LOW image detail occasionally misreads a blurry photo. The receipt checks itself
 don't add up to the printed total, it is read once more at MEDIUM image detail.
 """
 import datetime
+import logging
 import time
 from typing import Literal
 
+import httpx
 import streamlit as st
 from google import genai
-from google.genai import types
+from google.genai import errors, types
 from pydantic import BaseModel, ConfigDict, Field
 
 from grocery.config import (
@@ -28,7 +30,9 @@ from grocery.config import (
     MAX_ATTEMPTS,
     RETRY_DELAY_S,
 )
-from grocery.utils import normalize_category
+from grocery.utils import normalize_category, today
+
+log = logging.getLogger(__name__)
 
 ADDS_UP_TOLERANCE = 0.05  # euros; rounding on receipts
 
@@ -86,11 +90,13 @@ def _client():
     return genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
 
 
+RETRYABLE_CODES = {408, 429, 500, 502, 503, 504}  # rate limit, timeouts, server-side trouble
+
+
 def _retryable(err):
-    text = str(err)
-    return getattr(err, "code", None) in (429, 503) or any(
-        marker in text for marker in ("503", "429", "UNAVAILABLE")
-    ) or "overloaded" in text.lower()
+    if isinstance(err, errors.APIError):
+        return err.code in RETRYABLE_CODES
+    return isinstance(err, (httpx.TransportError, TimeoutError, ConnectionError))  # network hiccups
 
 
 def _read(data, mime, media_resolution, on_progress):
@@ -111,7 +117,9 @@ def _read(data, mime, media_resolution, on_progress):
             break
         except Exception as e:
             if not _retryable(e):
-                raise ExtractionError(f"Gemini error: {e}") from e
+                log.exception("Gemini call failed")
+                code = f" (error {e.code})" if isinstance(e, errors.APIError) else ""
+                raise ExtractionError(f"Gemini couldn't read this file{code}. Try another photo, or enter it manually.") from e
             if attempt == MAX_ATTEMPTS:
                 raise ExtractionError(f"Gemini is still busy after {MAX_ATTEMPTS} attempts. Try again in a minute.") from e
             if on_progress:
@@ -139,15 +147,19 @@ def extract_receipt(data, mime, on_progress=None):
     if not parsed.adds_up():
         if on_progress:
             on_progress("🔍 The items don't add up to the total, so reading it again in more detail…")
-        second, more_tokens = _read(data, mime, GEMINI_MEDIA_RESOLUTION_RECHECK, on_progress)
-        tokens += more_tokens
-        if second.gap() <= parsed.gap():  # keep whichever read is closer to adding up
-            parsed = second
+        try:
+            second, more_tokens = _read(data, mime, GEMINI_MEDIA_RESOLUTION_RECHECK, on_progress)
+        except ExtractionError:  # the first read is still usable; the review step flags the gap
+            log.warning("Detailed re-read failed; keeping the first read", exc_info=True)
+        else:
+            tokens += more_tokens
+            if second.gap() <= parsed.gap():  # keep whichever read is closer to adding up
+                parsed = second
 
     try:
         purchased_on, guessed = datetime.date.fromisoformat(parsed.date or ""), False
     except ValueError:
-        purchased_on, guessed = datetime.date.today(), True
+        purchased_on, guessed = today(), True
 
     return {
         "date": purchased_on,

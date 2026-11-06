@@ -18,7 +18,8 @@ LINE = {"item_id": "i", "receipt_id": "r", "purchased_on": "2026-11-01", "store"
 RECEIPTS = [
     {"id": "r1", "purchased_on": "2026-11-01", "store": "REWE Markt GmbH", "total": 3.0, "uploaded_by": "Bibi",
      "created_at": "2026-11-01T10:00:00Z", "updated_by": None, "updated_at": None,
-     "items": [{"name": "BUTTER", "category": "Dairy", "price": 2.0}, {"name": "BRÖTCHEN", "category": "Bakery", "price": 1.0}]},
+     "items": [{"name": "BUTTER", "category": "Dairy", "price": 2.0}, {"name": "BRÖTCHEN", "category": "Bakery", "price": 1.0},
+               {"name": "=HYPERLINK(\"x\")", "category": "Other", "price": -0.5}]},
     {"id": "r2", "purchased_on": "2026-11-01", "store": "Aldi", "total": None, "uploaded_by": "Dad",
      "created_at": "2026-11-01T12:00:00Z", "updated_by": "Bibi", "updated_at": "2026-11-02T09:00:00Z", "items": []},
 ]
@@ -112,5 +113,17 @@ def test_export_csv_one_row_per_item_with_bom(supabase):
     assert rows[0] == db.EXPORT_COLUMNS
     assert rows[1][:3] == ["r1", "2026-11-01", "REWE Markt GmbH"] and rows[1][8:] == ["BUTTER", "Dairy", "2.0"]
     assert rows[2][8] == "BRÖTCHEN"
-    assert rows[3][:4] == ["r2", "2026-11-01", "Aldi", ""] and rows[3][6] == "Bibi" and rows[3][8:] == ["", "", ""]
-    assert len(rows) == 4
+    assert rows[3][8:] == ["'=HYPERLINK(\"x\")", "Other", "-0.5"], "formula text escaped, negative price kept numeric"
+    assert rows[4][:4] == ["r2", "2026-11-01", "Aldi", ""] and rows[4][6] == "Bibi" and rows[4][8:] == ["", "", ""]
+    assert len(rows) == 5
+
+
+def test_failed_save_still_refreshes_cached_reads(supabase, monkeypatch):
+    calls = []
+    monkeypatch.setattr(db, "_invalidate", lambda: calls.append(1))
+    monkeypatch.setattr(db, "client", lambda: (_ for _ in ()).throw(ConnectionError("network down")))
+    with pytest.raises(ConnectionError):
+        db.save_receipt({"purchased_on": datetime.date(2026, 11, 1), "store": "X", "total": 1.0}, [], user="Bibi")
+    with pytest.raises(ConnectionError):
+        db.delete_receipt("r1")
+    assert len(calls) == 2

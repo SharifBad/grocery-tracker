@@ -5,9 +5,9 @@ import io
 from helpers import button, make_app, no_exc
 from PIL import Image
 
-from grocery.utils import month_label
+from grocery.utils import month_label, today
 
-TODAY = datetime.date.today()
+TODAY = today()
 LAST_MONTH = TODAY.replace(day=1) - datetime.timedelta(days=1)
 
 
@@ -21,7 +21,7 @@ def with_draft(user, **fields):
     at = make_app(user=user)
     at.session_state["draft_no"] = 1
     at.session_state["draft"] = {
-        "date": TODAY, "date_guessed": False, "store": "REWE", "total": 5.0, "file": None, "mime": None,
+        "purchased_on": TODAY, "date_guessed": False, "store": "REWE", "total": 5.0, "file": None, "mime": None,
         "filename": None, "items": [{"name": "MILCH", "category": "Dairy", "price": 5.0}], **fields,
     }
     return at
@@ -91,23 +91,153 @@ def test_history_edit_and_delete(store):
     no_exc(at)
     assert at.dataframe[0].value["Store"].tolist() == ["REWE"]
 
-    at.session_state[f"receipts_{month_label(TODAY)}_0"] = {"selection": {"rows": [0], "columns": [], "cells": []}}
-    at.run()
-    at.text_input[0].input("REWE City").run()
+    select_history_row(at, 0)
+    at.text_input(key=f"edit_{rid}_0_store").input("REWE City").run()
     button(at, "Save changes").click().run()
     no_exc(at)
     assert store[rid]["store"] == "REWE City" and store[rid]["updated_by"] == "Dad" and store[rid]["uploaded_by"] == "Bibi"
+    assert any("Receipt updated" in x.value for x in at.success)
 
-    at.session_state[f"receipts_{month_label(TODAY)}_1"] = {"selection": {"rows": [0], "columns": [], "cells": []}}
-    at.run()
+    select_history_row(at, 0)
     button(at, "Yes, delete it").click().run()
     no_exc(at)
     assert rid not in store
 
 
-def test_sidebar_has_backup_button_and_qr_page_works(store):
+def test_account_menu_has_backup_and_qr_page_works(store):
     at = no_exc(make_app(user="Bibi").run())
-    assert any("Download backup" in str(getattr(e, "proto", "")) for e in at.sidebar)
+    assert not at.sidebar.children, "navigation is a link row, not the sidebar"
+    assert "Download backup" in str(at.get("download_button")[0].proto)
+    assert button(at, "Sign out")
     at.switch_page("views/qr.py").run()
     no_exc(at)
     assert at.title[0].value == "📱 Fridge QR code"
+
+
+# --- Regression tests for bugs found in review ---------------------------------------------
+
+import hashlib  # noqa: E402
+
+from grocery import db as db_module  # noqa: E402
+from grocery.utils import month_bounds  # noqa: E402
+
+
+def select_history_row(at, row, month=None):
+    """Select a row in the History table the way a tap would (the table key depends on its contents)."""
+    month = month or month_label(TODAY)
+    receipts = db_module.load_receipts(*month_bounds(month))
+    ids_hash = hashlib.sha1("|".join(r["id"] for r in receipts).encode()).hexdigest()[:10]
+    key = f"receipts_{month}_{at.session_state['history_rev'] if 'history_rev' in at.session_state else 0}_{ids_hash}"
+    at.session_state[key] = {"selection": {"rows": [row], "columns": [], "cells": []}}
+    return at.run()
+
+
+def history_app(user):
+    at = make_app(user=user)
+    at.run()
+    at.switch_page("views/history.py").run()
+    return no_exc(at)
+
+
+def test_refund_receipt_with_negative_total_can_be_saved(store):
+    at = with_draft("Bibi", total=-4.99, items=[{"name": "RETOURE", "category": "Other", "price": -4.99}])
+    no_exc(at.run())
+    button(at, "Save receipt").click().run()
+    no_exc(at)
+    (saved,) = store.values()
+    assert saved["total"] == -4.99
+
+
+def test_history_opens_a_receipt_with_negative_total(store):
+    db_module.save_receipt({"purchased_on": TODAY, "store": "Pfandautomat", "total": -2.0},
+                           [{"name": "PFAND", "category": "Other", "price": -2.0}], "Bibi")
+    at = select_history_row(history_app("Dad"), 0)
+    no_exc(at)
+    assert at.subheader[0].value.startswith("Pfandautomat")
+
+
+def test_history_keeps_the_receipt_you_opened_when_someone_else_adds_one(store):
+    db_module.save_receipt({"purchased_on": TODAY.replace(day=1), "store": "Aldi", "total": 1.0},
+                           [{"name": "A", "category": "Other", "price": 1.0}], "Dad")
+    at = select_history_row(history_app("Bibi"), 0)
+    assert at.subheader[0].value.startswith("Aldi")
+    db_module.save_receipt({"purchased_on": TODAY, "store": "Edeka", "total": 9.0},  # sorts first now
+                           [{"name": "B", "category": "Other", "price": 9.0}], "Dad")
+    no_exc(at.run())
+    assert at.subheader[0].value.startswith("Aldi")
+
+
+def test_delete_hits_the_receipt_you_chose_even_if_the_list_changed(store):
+    db_module.save_receipt({"purchased_on": TODAY.replace(day=1), "store": "Aldi", "total": 1.0},
+                           [{"name": "A", "category": "Other", "price": 1.0}], "Dad")
+    aldi = next(iter(store))
+    at = select_history_row(history_app("Dad"), 0)
+    db_module.save_receipt({"purchased_on": TODAY, "store": "Edeka", "total": 9.0},
+                           [{"name": "B", "category": "Other", "price": 9.0}], "Bibi")
+    at.button(key=f"delete_{aldi}").click().run()
+    no_exc(at)
+    assert aldi not in store and [r["store"] for r in store.values()] == ["Edeka"]
+
+
+def test_history_survives_the_open_receipt_being_deleted_elsewhere(store, monkeypatch):
+    for day, name in ((1, "Aldi"), (2, "Lidl")):
+        db_module.save_receipt({"purchased_on": TODAY.replace(day=day), "store": name, "total": float(day)},
+                               [{"name": "X", "category": "Other", "price": float(day)}], "Dad")
+    at = select_history_row(history_app("Bibi"), 1)  # last row
+    opened = at.subheader[0].value
+    del store[next(k for k, r in store.items() if opened.startswith(r["store"]))]
+    no_exc(at.run())  # used to raise IndexError
+    assert not at.subheader, "editor closes when its receipt is gone"
+
+    at = select_history_row(history_app("Bibi"), 0)
+    monkeypatch.setattr(db_module, "save_receipt", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("receipt not found")))
+    button(at, "Save changes").click().run()
+    no_exc(at)
+    assert any("Someone else may have just deleted it" in e.value for e in at.error)
+
+
+def test_review_corrections_survive_a_visit_to_another_page(store):
+    at = no_exc(with_draft("Bibi").run())
+    at.text_input(key="draft1_store").input("Edeka")
+    at.number_input(key="draft1_total").set_value(7.25).run()
+    at.switch_page("views/dashboard.py").run()
+    at.switch_page("views/upload.py").run()
+    no_exc(at)
+    assert at.text_input(key="draft1_store").value == "Edeka" and at.number_input(key="draft1_total").value == 7.25
+    button(at, "Save receipt").click().run()
+    (saved,) = store.values()
+    assert saved["store"] == "Edeka" and saved["total"] == 7.25
+
+
+def test_future_date_is_flagged(store):
+    at = no_exc(with_draft("Bibi", purchased_on=TODAY + datetime.timedelta(days=30)).run())
+    assert any("in the future" in w.value for w in at.warning)
+
+
+def test_database_down_shows_a_message_not_a_traceback(store, monkeypatch):
+    def down(*a, **k):
+        raise ConnectionError("database unreachable")
+
+    monkeypatch.setattr(db_module, "load_item_lines", down)
+    at = make_app(user="Bibi")
+    at.run()
+    for page in ("views/dashboard.py", "views/history.py"):
+        at.switch_page(page).run()
+        no_exc(at)
+        assert any("database may be waking up" in e.value for e in at.error), page
+
+
+def test_duplicate_check_failure_does_not_block_saving(store, monkeypatch):
+    monkeypatch.setattr(db_module, "find_duplicates", lambda *a: (_ for _ in ()).throw(ConnectionError()))
+    at = no_exc(with_draft("Bibi").run())
+    assert any("Couldn't check for duplicates" in c.value for c in at.caption)
+    button(at, "Save receipt").click().run()
+    assert len(store) == 1
+
+
+def test_failed_save_keeps_the_draft(store, monkeypatch):
+    monkeypatch.setattr(db_module, "save_receipt", lambda *a, **k: (_ for _ in ()).throw(ConnectionError()))
+    at = no_exc(with_draft("Bibi").run())
+    button(at, "Save receipt").click().run()
+    no_exc(at)
+    assert any("Couldn't save the receipt" in e.value for e in at.error) and "draft" in at.session_state

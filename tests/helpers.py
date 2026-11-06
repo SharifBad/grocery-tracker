@@ -1,6 +1,7 @@
 """Helpers for AppTest-based tests."""
 from pathlib import Path
 
+from streamlit import config
 from streamlit.testing.v1 import AppTest
 
 APP = str(Path(__file__).resolve().parents[1] / "app.py")
@@ -16,6 +17,8 @@ def make_app(user=None, family=FAMILY, code=CODE):
     """
     from grocery import auth
 
+    # .streamlit/config.toml hides error details from users; tests need to see them.
+    config.set_option("client.showErrorDetails", "full")
     at = AppTest.from_file(APP, default_timeout=60)
     at.secrets["GEMINI_API_KEY"] = "test-not-a-real-key"
     if family is not None:

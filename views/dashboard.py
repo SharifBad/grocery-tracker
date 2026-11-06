@@ -2,12 +2,13 @@
 import streamlit as st
 
 from grocery import db
-from grocery.ui import euro, month_picker
+from grocery.ui import database_errors, euro, month_picker
 from grocery.utils import month_label, pretty_month, shift_month, week_label
 
 st.title("📊 Dashboard")
 
-df = db.load_item_lines()
+with database_errors("load your spending"):
+    df = db.load_item_lines()
 if df.empty:
     st.info("No receipts yet. Add one on the **Add receipt** page.")
     st.stop()

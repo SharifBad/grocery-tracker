@@ -71,6 +71,12 @@ def find_duplicates(purchased_on, store, total):
     return [r for r in same_day if looks_like_duplicate(r, store, total)]
 
 
+def _csv_text(value):
+    """Text cells starting with = + - @ would run as formulas in Excel; prefix them with '."""
+    text = "" if value is None else str(value)
+    return "'" + text if text[:1] in ("=", "+", "-", "@", "\t", "\r") else text
+
+
 EXPORT_COLUMNS = ["receipt_id", "date", "store", "receipt_total", "added_by", "added_at",
                   "edited_by", "edited_at", "item", "category", "price"]
 
@@ -85,10 +91,10 @@ def export_csv():
     writer = csv.writer(buf)
     writer.writerow(EXPORT_COLUMNS)
     for r in receipts:
-        receipt = [r["id"], r["purchased_on"], r["store"], "" if r["total"] is None else r["total"],
-                   r["uploaded_by"], r["created_at"], r.get("updated_by") or "", r.get("updated_at") or ""]
+        receipt = [r["id"], r["purchased_on"], _csv_text(r["store"]), "" if r["total"] is None else r["total"],
+                   _csv_text(r["uploaded_by"]), r["created_at"], _csv_text(r.get("updated_by")), r.get("updated_at") or ""]
         for item in r["items"] or [{"name": "", "category": "", "price": ""}]:
-            writer.writerow(receipt + [item["name"], item["category"], item["price"]])
+            writer.writerow(receipt + [_csv_text(item["name"]), _csv_text(item["category"]), item["price"]])
     return buf.getvalue().encode("utf-8-sig")  # BOM so Excel shows umlauts correctly
 
 
@@ -105,11 +111,14 @@ def save_receipt(receipt, items, user, receipt_id=None):
         "p_user": user,
         "p_id": receipt_id,
     }
-    rid = client().rpc("save_receipt", payload).execute().data
-    _invalidate()
-    return rid
+    try:
+        return client().rpc("save_receipt", payload).execute().data
+    finally:
+        _invalidate()  # even on error: the save may have gone through with the reply lost
 
 
 def delete_receipt(receipt_id):
-    client().table("receipts").delete().eq("id", receipt_id).execute()  # items cascade
-    _invalidate()
+    try:
+        client().table("receipts").delete().eq("id", receipt_id).execute()  # items cascade
+    finally:
+        _invalidate()

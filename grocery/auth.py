@@ -1,6 +1,8 @@
 """Sign-in: your name (must be in FAMILY) plus the shared family code (FAMILY_CODE), from secrets.
 
 Changing FAMILY_CODE signs everyone out on their next click, which is how to revoke access.
+Wrong attempts slow down all sign-ins a little (1 s, growing to 10 s with many recent failures),
+which makes guessing the code impractical without ever locking the family out.
 """
 import hashlib
 import hmac
@@ -21,6 +23,19 @@ def _secret(name, default):
 
 def _family():
     return [str(n).strip() for n in _secret("FAMILY", []) if str(n).strip()]
+
+
+@st.cache_resource
+def _recent_failures():
+    return []  # timestamps of failed sign-ins, shared by all sessions in this server process
+
+
+def _failure_delay():
+    now = time.time()
+    failures = _recent_failures()
+    failures[:] = [t for t in failures if now - t < 600]
+    failures.append(now)
+    return min(1 + len(failures) // 5, 10)
 
 
 def _normalize_code(code):
@@ -60,14 +75,15 @@ def require_family_member():
             st.session_state[USER_KEY] = match
             st.session_state[CODE_KEY] = _fingerprint(family_code)
             st.rerun()
-        time.sleep(1)  # slows down guessing
+        time.sleep(_failure_delay())  # slows down guessing
         st.error("That name or family code isn't right.")
     st.stop()
 
 
 def sign_out():
-    st.session_state.pop(USER_KEY, None)
-    st.session_state.pop(CODE_KEY, None)
+    """Forget everything, including any half-finished receipt, so the next person starts clean."""
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
 
 
 def current_user():

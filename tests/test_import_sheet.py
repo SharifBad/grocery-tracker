@@ -28,3 +28,23 @@ def test_parses_realigns_and_groups_old_sheet_rows():
     assert lidl["total"] == 5.49 and [i["category"] for i in lidl_items] == ["Dairy", "Bakery"]
     assert lidl_items[0]["price"] == 1.99
     assert aldi["store"] == "Aldi" and len(aldi_items) == 2 and aldi_items[1]["category"] == "Other"
+
+
+def test_unreadable_money_is_reported_not_silently_zeroed(capsys):
+    rows = import_sheet.parse_rows([
+        HEADERS,
+        ["2026-11-01", "Lidl", "Milk", "Dairy", "1.234,56", "", "", "EUR 1.234,56"],
+        ["2026-11-02", "Lidl", "Bread", "Bakery", "n/a", "", "", "??"],
+    ])
+    assert rows[0]["item"]["price"] == 1234.56 and rows[0]["total"] == 1234.56
+    assert rows[1]["item"]["price"] == 0.0 and rows[1]["total"] is None
+    out = capsys.readouterr().out
+    assert "unreadable price 'n/a'" in out and "unreadable receipt total '??'" in out
+
+
+def test_already_imported_receipts_are_recognised_for_resuming():
+    receipt = {"purchased_on": __import__("datetime").date(2026, 11, 1), "store": "Lidl", "total": 5.49,
+               "items": [{"name": "Milk"}, {"name": "Bread"}]}
+    from_db = {"purchased_on": "2026-11-01", "store": "Lidl", "total": 5.49, "items": [{"id": 1}, {"id": 2}]}
+    assert import_sheet.fingerprint(receipt) == import_sheet.fingerprint(from_db)
+    assert import_sheet.fingerprint({**from_db, "items": [{"id": 1}]}) != import_sheet.fingerprint(receipt)

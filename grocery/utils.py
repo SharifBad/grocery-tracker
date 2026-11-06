@@ -2,19 +2,43 @@
 import datetime
 import difflib
 import re
+from zoneinfo import ZoneInfo
 
-from grocery.config import CATEGORIES
+from grocery.config import CATEGORIES, TIMEZONE
 
 _CATEGORY_LOOKUP = {c.lower(): c for c in CATEGORIES}
 
 
-def to_money(value):
-    """Parse '€1,99', '$2.50', 3, None, ... into a 2-decimal float (0.0 if unparseable)."""
-    s = str(value).replace("€", "").replace("$", "").replace(",", ".").strip()
+def today():
+    """Today's date in the family's time zone (the server runs on UTC)."""
+    return datetime.datetime.now(ZoneInfo(TIMEZONE)).date()
+
+
+def parse_money(value):
+    """Parse money text into a 2-decimal float, or None if it isn't a number.
+
+    Handles '€1,99', '1.234,56' (German), '1,234.56', 'EUR 2,50', '-1,50' and '−1,50' (Unicode minus).
+    With both separators present, the last one is the decimal point.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return round(float(value), 2)
+    s = re.sub(r"[^0-9,.\-]", "", str(value).replace("\u2212", "-"))
+    if "," in s and "." in s:
+        thousands = "." if s.rfind(",") > s.rfind(".") else ","
+        s = s.replace(thousands, "")
+    s = s.replace(",", ".")
     try:
         return round(float(s), 2)
     except ValueError:
-        return 0.0
+        return None
+
+
+def to_money(value):
+    """Like parse_money, but 0.0 when the value isn't a number."""
+    parsed = parse_money(value)
+    return 0.0 if parsed is None else parsed
 
 
 def normalize_category(value):

@@ -57,3 +57,20 @@ def test_duplicate_rule():
     assert looks_like_duplicate({"store": "REWE", "total": None}, "Rewe Markt", 5.0), "no saved total: compare stores"
     assert looks_like_duplicate(saved, "REWE", None), "no new total: compare stores"
     assert not looks_like_duplicate({"store": "Aldi", "total": None}, "Lidl", None)
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("1.234,56", 1234.56), ("1,234.56", 1234.56), ("EUR 2,50", 2.5), ("−1,50", -1.5), ("-0,30", -0.3),
+    ("5,49 A", 5.49), ("", None), ("abc", None), (None, None), (True, None),
+])
+def test_parse_money_formats(raw, expected):
+    from grocery.utils import parse_money
+    assert parse_money(raw) == expected
+
+
+def test_today_uses_family_time_zone():
+    from zoneinfo import ZoneInfo
+
+    from grocery.config import TIMEZONE
+    from grocery.utils import today
+    assert today() == datetime.datetime.now(ZoneInfo(TIMEZONE)).date()
