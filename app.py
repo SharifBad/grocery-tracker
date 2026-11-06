@@ -15,6 +15,7 @@ pages = [
     st.Page("views/upload.py", title="Add receipt", icon="📸", default=True),
     st.Page("views/dashboard.py", title="Dashboard", icon="📊"),
     st.Page("views/history.py", title="History", icon="🧾"),
+    st.Page("views/prices.py", title="Prices", icon="🏷️"),
     st.Page("views/qr.py", title="QR", icon="📱"),
 ]
 page = st.navigation(pages, position="hidden")
