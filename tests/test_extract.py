@@ -69,11 +69,11 @@ def test_no_total_means_no_reread_and_date_guessed():
     assert len(configs) == 1 and out["total"] is None and out["date_guessed"]
 
 
-def test_store_is_mapped_to_the_chain_and_the_prompt_lists_the_chains():
-    from grocery.config import STORES
+def test_store_is_mapped_to_the_chain_after_reading():
+    # The prompt doesn't list the chains (saves ~90 tokens per receipt); mapping happens afterwards.
     out, _, _ = run(GOOD.replace('"s":"REWE"', '"s":"REWE Markt GmbH"'))
     assert out["store"] == "REWE"
-    assert all(name in extract.PROMPT for name in STORES)
+    assert "Lidl" not in extract.PROMPT
 
 
 def test_full_field_names_still_parse():

@@ -23,7 +23,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from grocery.config import (
     CATEGORIES,
-    STORES,
     GEMINI_MEDIA_RESOLUTION,
     GEMINI_MEDIA_RESOLUTION_RECHECK,
     GEMINI_MODEL,
@@ -37,30 +36,17 @@ log = logging.getLogger(__name__)
 
 ADDS_UP_TOLERANCE = 0.05  # euros; rounding on receipts
 
-PROMPT = f"""
+PROMPT = """
 Read this grocery receipt and extract it.
-
-- date: purchase date as YYYY-MM-DD, or null if not printed.
-- store: if the shop is one of these chains, write exactly this name: {", ".join(STORES)}.
-  Otherwise the shop name as printed.
-- total: the final amount paid.
-- items: one entry per purchased line.
-  - name: the product name exactly as printed (don't expand abbreviations).
-  - price: final price paid for that line (quantity x unit price, after any line discount).
-    If a discount can't be tied to an item, add it as its own item named "Discount" with a
-    negative price and category Other.
-  - category, one of {", ".join(CATEGORIES)}:
-    Fruit = fresh fruit; Vegetables = vegetables, salad, potatoes, fresh herbs;
-    Meat & Fish = meat, poultry, sausage, cold cuts, fish, seafood; Dairy & Eggs = milk, cheese, yogurt, butter, cream, eggs;
-    Bakery = bread, rolls, toast, crispbread, cakes, pastries (fresh or packaged);
-    Pantry = pasta, rice, flour, cereal, muesli, canned and jarred food, oil, spices, sauces, sugar, coffee, tea;
-    Snacks & Sweets = chips, nuts, chocolate, candy, packaged biscuits, ice cream; Drinks = water, juice, soda, beer, wine;
-    Frozen = frozen meals, pizza, vegetables (not ice cream);
-    Cleaning & Household = detergent, dish soap, cleaning products, toilet paper, kitchen roll, bin bags, batteries;
-    Skin & Body Care = skin care, cosmetics, shampoo, soap, toothpaste, deodorant, razors;
-    Health = medicine, vitamins, plasters; Pet = pet food, cat litter, pet supplies;
-    Clothes & Shoes = clothing, shoes, socks; Other = bottle deposits (Pfand), bags, gift cards, anything else.
-Skip subtotal, tax, payment, card and change lines.
+- date: YYYY-MM-DD, or null if not printed. store: the shop name. total: the amount paid.
+- items: one per purchased line. name: exactly as printed. price: what was paid for the line
+  (after line discounts); a discount not tied to an item is its own item "Discount", negative, Other.
+- category guide: Vegetables incl. salad, potatoes, herbs. Meat & Fish incl. sausage, cold cuts.
+  Bakery: bread, toast, crispbread, cakes. Pantry: pasta, rice, flour, muesli, cans, oil, spices,
+  sauces, coffee, tea. Snacks & Sweets: chips, nuts, chocolate, biscuits, ice cream. Frozen: not ice
+  cream. Cleaning & Household: detergent, toilet paper, bin bags. Skin & Body Care: cosmetics,
+  shampoo, toothpaste. Health: medicine, plasters. Other: Pfand, bags.
+Skip subtotal, tax, payment and change lines.
 JSON keys: d=date, s=store, t=total, i=items; per item n=name, c=category, p=price.
 """
 

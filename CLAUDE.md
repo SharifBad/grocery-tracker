@@ -75,19 +75,20 @@ Measured 2026-11-06 with gemini-3.8-flash on simulated phone photos of 25- and 4
 - **Add-up check:** if the items don't sum to the printed total (±€0.05), `extract_receipt` reads once more at MEDIUM and keeps whichever read is closer. In testing this check flagged every misread and never fired on a correct read.
 - **Compact output:** the pydantic models use one-letter aliases (`n`, `c`, `p`, …), and names are copied as printed rather than expanded. The Python code still uses the full field names.
 - **Result:** ~1,420 billed tokens and ~8 s for a 40-item receipt, against ~11,400 tokens and ~68 s before.
+- **Prompt size (2026-11-07):** 264 tokens. The chain list was taken out because `canonical_store` maps names after reading, and the category guide was cut to keywords plus the borderline hints. A full A/B against the longer prompt (579 tokens) gave the same accuracy: 18/18 categories twice, all 40 prices on a sharp receipt, and equal misreads on an extremely blurry one. Measured: ~950 tokens for an 18-item receipt, ~1,420 for 40 items, ~3,100–4,100 when a bad photo triggers the re-read.
 - **Pixel size doesn't change tokens.** Gemini billed the same at every size from 250 px to full resolution. The fixed shrink to `OCR_SHORT_SIDE = 700` px is only for upload speed and memory (everything was read correctly down to 250 px). The phone still uploads the full photo to the Streamlit server.
 - `extract_receipt` returns `tokens`, and the upload page shows it once a read finishes.
 
 ## Categories
 
-- `config.CATEGORIES` has 15 categories: Fruit, Vegetables, Meat & Fish, Dairy & Eggs, Bakery, Pantry, Snacks & Sweets, Drinks, Frozen, Cleaning & Household, Skin & Body Care, Health, Pet, Clothes & Shoes, Other. Gemini's prompt in `extract.py` says where borderline items go: crispbread and toast → Bakery; packaged biscuits and ice cream → Snacks & Sweets; Pfand → Other.
+- `config.CATEGORIES` has 15 categories: Fruit, Vegetables, Meat & Fish, Dairy & Eggs, Bakery, Pantry, Snacks & Sweets, Drinks, Frozen, Cleaning & Household, Skin & Body Care, Health, Pet, Clothes & Shoes, Other. The short category guide in `extract.py`'s prompt says where borderline items go: crispbread and toast → Bakery; biscuits and ice cream → Snacks & Sweets; Pfand → Other. The schema's enum supplies the full list.
 - `config.CATEGORY_ALIASES` maps other spellings and the app's earlier names onto the list (Dairy → Dairy & Eggs, Produce → Vegetables, …). `normalize_category` applies it to Gemini's answer, where an unknown category becomes Other instead of failing the read, to the review form, the dashboard and the import.
-- Live check, 2026-11-07: an 18-item receipt with one item per category was categorised 18/18 correctly, for about 1,260 tokens.
+- Live check, 2026-11-07: an 18-item receipt with one item per category was categorised 18/18 correctly, twice, for about 950 tokens.
 
 ## Stores
 
 - `config.STORES` lists common German chains (REWE, Lidl, Aldi, Edeka, Kaufland, Netto, Penny, Rossmann, dm, Müller, …). Each entry has phrases that identify the chain anywhere in a name, plus words that only count as the *whole* name; "Müller" and "dm" are exact-only, so "Bäckerei Müller" stays a bakery.
-- `utils.canonical_store` maps any name onto a chain, ignoring case, umlauts, punctuation and GmbH/KG. It also catches one misread letter in words of 6+ letters ("Kaufiand"). Anything else is kept as printed, tidied. It's applied to Gemini's answer, the review form, `same_store` and the sheet import. Gemini's prompt also lists the chains.
+- `utils.canonical_store` maps any name onto a chain, ignoring case, umlauts, punctuation and GmbH/KG. It also catches one misread letter in words of 6+ letters ("Kaufiand"). Anything else is kept as printed, tidied. It's applied to Gemini's answer, the review form, `same_store` and the sheet import. The prompt does *not* list the chains: mapping afterwards is enough and saves ~90 tokens.
 - The review form's store field is a dropdown (`accept_new_options`): chains first, then stores used before, and typing a new one is allowed. The dashboard has a "By store" table.
 
 ## Duplicates and backups
