@@ -1,4 +1,15 @@
-"""Receipt -> structured data via Gemini, using a response schema so categories come back valid."""
+"""Receipt -> structured data via Gemini, tuned for low token use.
+
+Token budget (measured 2026-11-06, gemini-3.8-flash, 40-item receipt; details in CLAUDE.md):
+- thinking_level LOW: hidden "thinking" was the biggest cost (up to ~9,000 output tokens per
+  receipt at the default level); at LOW it is ~0 and reading is 2-8x faster, same accuracy.
+- media_resolution LOW: the image costs ~550 input tokens instead of ~1,350 at the default.
+- compact JSON: one-letter keys (pydantic aliases) and names copied as printed.
+Together: ~1,400 billed tokens instead of ~11,400 for a 40-item receipt.
+
+LOW image detail occasionally misreads a blurry photo. The receipt checks itself: if the items
+don't add up to the printed total, it is read once more at MEDIUM image detail.
+"""
 import datetime
 import time
 from typing import Literal
@@ -6,10 +17,20 @@ from typing import Literal
 import streamlit as st
 from google import genai
 from google.genai import types
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-from grocery.config import CATEGORIES, GEMINI_MODEL, MAX_ATTEMPTS, RETRY_DELAY_S
+from grocery.config import (
+    CATEGORIES,
+    GEMINI_MEDIA_RESOLUTION,
+    GEMINI_MEDIA_RESOLUTION_RECHECK,
+    GEMINI_MODEL,
+    GEMINI_THINKING_LEVEL,
+    MAX_ATTEMPTS,
+    RETRY_DELAY_S,
+)
 from grocery.utils import normalize_category
+
+ADDS_UP_TOLERANCE = 0.05  # euros; rounding on receipts
 
 PROMPT = f"""
 Read this grocery receipt and extract it.
@@ -18,7 +39,7 @@ Read this grocery receipt and extract it.
 - store: the shop name.
 - total: the final amount paid.
 - items: one entry per purchased line.
-  - name: readable product name in the receipt's language; expand obvious abbreviations.
+  - name: the product name exactly as printed (don't expand abbreviations).
   - price: final price paid for that line (quantity x unit price, after any line discount).
     If a discount can't be tied to an item, add it as its own item named "Discount" with a
     negative price and category Other.
@@ -29,20 +50,31 @@ Read this grocery receipt and extract it.
     Household = cleaning products, toiletries, paper goods, other non-food;
     Other = bottle deposits, bags, anything else.
 Skip subtotal, tax, payment, card and change lines.
+JSON keys: d=date, s=store, t=total, i=items; per item n=name, c=category, p=price.
 """
 
 
+# Gemini writes the short aliases (n, c, p, ...); Python code uses the full names.
 class ExtractedItem(BaseModel):
-    name: str
-    category: Literal[tuple(CATEGORIES)]  # type: ignore[valid-type]
-    price: float
+    model_config = ConfigDict(populate_by_name=True)
+    name: str = Field(alias="n")
+    category: Literal[tuple(CATEGORIES)] = Field(alias="c")  # type: ignore[valid-type]
+    price: float = Field(alias="p")
 
 
 class ExtractedReceipt(BaseModel):
-    date: str | None = Field(None, description="YYYY-MM-DD")
-    store: str | None = None
-    total: float | None = None
-    items: list[ExtractedItem]
+    model_config = ConfigDict(populate_by_name=True)
+    date: str | None = Field(None, alias="d", description="YYYY-MM-DD")
+    store: str | None = Field(None, alias="s")
+    total: float | None = Field(None, alias="t")
+    items: list[ExtractedItem] = Field(alias="i")
+
+    def gap(self):
+        """How far the items' sum is from the printed total (0 if there is no total to check)."""
+        return 0.0 if self.total is None else abs(sum(i.price for i in self.items) - self.total)
+
+    def adds_up(self):
+        return self.gap() <= ADDS_UP_TOLERANCE
 
 
 class ExtractionError(Exception):
@@ -61,40 +93,56 @@ def _retryable(err):
     ) or "overloaded" in text.lower()
 
 
-def _call_gemini(data, mime, on_retry):
+def _read(data, mime, media_resolution, on_progress):
+    """One extraction call (with busy-retries). Returns (parsed receipt, billed tokens)."""
+    config = types.GenerateContentConfig(
+        response_mime_type="application/json",
+        response_schema=ExtractedReceipt,
+        media_resolution=getattr(types.MediaResolution, f"MEDIA_RESOLUTION_{media_resolution}"),
+        thinking_config=types.ThinkingConfig(thinking_level=getattr(types.ThinkingLevel, GEMINI_THINKING_LEVEL)),
+    )
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
-            return _client().models.generate_content(
+            response = _client().models.generate_content(
                 model=GEMINI_MODEL,
                 contents=[types.Part.from_bytes(data=data, mime_type=mime), PROMPT],
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema=ExtractedReceipt,
-                ),
+                config=config,
             )
+            break
         except Exception as e:
             if not _retryable(e):
                 raise ExtractionError(f"Gemini error: {e}") from e
             if attempt == MAX_ATTEMPTS:
                 raise ExtractionError(f"Gemini is still busy after {MAX_ATTEMPTS} attempts. Try again in a minute.") from e
-            if on_retry:
-                on_retry(attempt, RETRY_DELAY_S)
+            if on_progress:
+                on_progress(f"⚠️ Gemini is busy, retrying in {RETRY_DELAY_S}s (attempt {attempt + 1}/{MAX_ATTEMPTS})")
             time.sleep(RETRY_DELAY_S)
 
-
-def extract_receipt(data, mime, on_retry=None):
-    """Return {date, date_guessed, store, total, items: [{name, category, price}]}.
-
-    on_retry(attempt, wait_seconds) is called before each retry so the UI can show progress.
-    Raises ExtractionError with a user-facing message.
-    """
-    response = _call_gemini(data, mime, on_retry)
     parsed = response.parsed
     if not isinstance(parsed, ExtractedReceipt):
         try:
             parsed = ExtractedReceipt.model_validate_json(response.text or "")
         except ValueError as e:
             raise ExtractionError("Gemini's answer couldn't be understood. Try again or enter it manually.") from e
+    usage = getattr(response, "usage_metadata", None)
+    tokens = (usage.total_token_count or 0) if usage else 0
+    return parsed, tokens
+
+
+def extract_receipt(data, mime, on_progress=None):
+    """Return {date, date_guessed, store, total, items: [{name, category, price}], tokens}.
+
+    on_progress(message) is called with status updates (busy retries, double-checking).
+    Raises ExtractionError with a user-facing message.
+    """
+    parsed, tokens = _read(data, mime, GEMINI_MEDIA_RESOLUTION, on_progress)
+    if not parsed.adds_up():
+        if on_progress:
+            on_progress("🔍 The items don't add up to the total, so reading it again in more detail…")
+        second, more_tokens = _read(data, mime, GEMINI_MEDIA_RESOLUTION_RECHECK, on_progress)
+        tokens += more_tokens
+        if second.gap() <= parsed.gap():  # keep whichever read is closer to adding up
+            parsed = second
 
     try:
         purchased_on, guessed = datetime.date.fromisoformat(parsed.date or ""), False
@@ -110,4 +158,5 @@ def extract_receipt(data, mime, on_retry=None):
             {"name": i.name.strip(), "category": normalize_category(i.category), "price": round(i.price, 2)}
             for i in parsed.items
         ],
+        "tokens": tokens,
     }

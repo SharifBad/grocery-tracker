@@ -3,3 +3,4 @@ google-genai>=1.15.0
 supabase>=2.0
 pandas
 qrcode[pil]
+streamlit-cropper==0.3.1
