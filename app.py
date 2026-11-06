@@ -3,11 +3,14 @@ import streamlit as st
 
 from grocery import db
 from grocery.auth import require_family_member, sign_out
+from grocery.config import LOGO
+from grocery.ui import avatar
 from grocery.utils import today
 
-st.set_page_config(page_title="Grocery Tracker", page_icon="🛒", layout="centered")
+st.set_page_config(page_title="Grocery Tracker", page_icon=str(LOGO), layout="centered")
 
 user = require_family_member()
+st.logo(str(LOGO), size="large")
 
 pages = [
     st.Page("views/upload.py", title="Add receipt", icon="📸", default=True),
@@ -27,7 +30,12 @@ st.session_state["current_page"] = page.title
 with st.container(horizontal=True, gap="small", vertical_alignment="center"):
     for p in pages:
         st.page_link(p, label=p.title, icon=p.icon)
-    with st.popover(f"👤 {user}"):
+    photo = avatar(user)
+    if photo:
+        st.image(photo, width=36)
+    with st.popover(user if photo else f"👤 {user}"):
+        if photo:
+            st.image(photo, width=96)
         st.download_button(
             "⬇️ Download backup (CSV)",
             data=db.export_csv,  # built only when clicked

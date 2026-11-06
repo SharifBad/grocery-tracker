@@ -1,4 +1,11 @@
 """App-wide constants. No Streamlit imports here so scripts can use it too."""
+from pathlib import Path
+
+# Bibi's round badge: browser-tab icon, sign-in page and header. Made from a family photo,
+# cropped to the cat only (the repo is public; the original photo is gitignored).
+LOGO = Path(__file__).resolve().parents[1] / "assets" / "logo.png"
+# Profile photos: assets/avatars/<name in lower case>.png (e.g. shiqing.png). Missing = 👤.
+AVATARS = Path(__file__).resolve().parents[1] / "assets" / "avatars"
 
 CATEGORIES = ["Produce", "Dairy", "Meat", "Bakery", "Pantry", "Household", "Other"]
 

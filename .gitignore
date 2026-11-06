@@ -10,3 +10,6 @@ venv/
 # Test tooling
 .pytest_cache/
 tests/sql/node_modules/
+
+# Original family photo the logo was cropped from (faces; the repo is public)
+logo.jpeg

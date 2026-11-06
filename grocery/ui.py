@@ -1,11 +1,13 @@
 """Streamlit widgets shared between pages."""
+import base64
+import io
 import logging
 from contextlib import contextmanager
 
 import pandas as pd
 import streamlit as st
 
-from grocery.config import CATEGORIES
+from grocery.config import AVATARS, CATEGORIES
 from grocery.utils import month_label, normalize_category, pretty_month, today
 
 log = logging.getLogger(__name__)
@@ -35,6 +37,25 @@ def database_errors(action):
         log.exception("Database error while trying to %s", action)
         st.error(f"Couldn't {action}. The database may be waking up or unreachable. Wait a moment and reload the page.")
         st.stop()
+
+
+def avatar(name):
+    """Path of a family member's profile photo, or None (then show 👤)."""
+    path = AVATARS / f"{str(name or '').strip().casefold()}.png"
+    return str(path) if path.is_file() else None
+
+
+@st.cache_data(show_spinner=False)
+def avatar_data_uri(name, size=48):
+    """Small inline copy of the profile photo for table image columns (None if there is none)."""
+    from PIL import Image
+
+    path = avatar(name)
+    if not path:
+        return None
+    buf = io.BytesIO()
+    Image.open(path).resize((size, size), Image.Resampling.LANCZOS).save(buf, "PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
 def month_picker(item_lines, key):

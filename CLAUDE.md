@@ -94,6 +94,11 @@ Measured 2026-11-06 with gemini-3.8-flash on simulated phone photos of 25- and 4
 - **Images:** `imaging.load_photo` puts transparency onto white, rescales 16-bit images, rejects tiny or garbage files with `UnusableImage`, and decodes huge JPEGs at reduced size. `imaging.clamp_box` keeps crop boxes inside the picture.
 - **Money text:** `utils.parse_money` handles `1.234,56`, `1,234.56`, `EUR 2,50` and the Unicode minus, and returns None when it can't read the value. The import script reports unreadable cells and can be re-run safely, because it skips receipts already imported.
 
+## Logo and profile photos
+
+- `assets/logo.png` (`config.LOGO`) is Bibi the cat, cropped from a family photo. It's the browser-tab icon, sits on the sign-in page, and goes in the header via `st.logo`. The original photo `logo.jpeg` is gitignored because it shows faces and the repo is public.
+- Profile photos: `assets/avatars/<lower-case name>.png`, e.g. `shiqing.png` and `charif.png`. `ui.avatar(name)` finds them, ignoring case, and returns None, meaning 👤, for anyone without one. They appear in the top row, the 👤 menu, and the dashboard's "By family member" table (`ui.avatar_data_uri` for `ImageColumn`). To add someone, save a round 192 px PNG under their name.
+
 ## Conventions and gotchas
 
 - `streamlit-cropper` (pinned 0.3.1) uses a fabric.js canvas. The first tap selects the box, and only then do the corner handles appear. A drag without a tap first moves the box instead of resizing it. The UI caption says so.

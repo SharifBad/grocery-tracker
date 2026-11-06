@@ -10,6 +10,8 @@ import time
 
 import streamlit as st
 
+from grocery.config import LOGO
+
 USER_KEY = "user"
 CODE_KEY = "code_fingerprint"
 
@@ -59,7 +61,9 @@ def require_family_member():
         return st.session_state[USER_KEY]
 
     st.session_state.pop(USER_KEY, None)
-    st.title("🛒 Bibi's Grocery Tracker")
+    with st.container(horizontal=True, vertical_alignment="center"):
+        st.image(str(LOGO), width=72)
+        st.title("Bibi's Grocery Tracker")
     if not family or not _normalize_code(family_code):
         st.error('Sign-in isn\'t set up yet. Add `FAMILY = ["Name", ...]` and `FAMILY_CODE = "..."` to the app\'s secrets.')
         st.stop()
