@@ -74,3 +74,24 @@ def test_today_uses_family_time_zone():
     from grocery.config import TIMEZONE
     from grocery.utils import today
     assert today() == datetime.datetime.now(ZoneInfo(TIMEZONE)).date()
+
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("REWE Markt GmbH", "REWE"), ("Rewe City", "REWE"), ("Lidl Dienstleistung GmbH & Co. KG", "Lidl"),
+    ("ALDI SÜD", "Aldi"), ("EDEKA Center Müller", "Edeka"), ("E center", "Edeka"),
+    ("Kaufland Warenhandel GmbH", "Kaufland"), ("Netto Marken-Discount", "Netto"), ("PENNY Markt GmbH", "Penny"),
+    ("dm-drogerie markt GmbH + Co. KG", "dm"), ("Dirk Rossmann GmbH", "Rossmann"), ("Rossman", "Rossmann"),
+    ("Müller Ltd. & Co. KG", "Müller"), ("Mueller", "Müller"), ("denns BioMarkt", "denn's Biomarkt"),
+    ("Kaufiand", "Kaufland"), ("Rossmamn", "Rossmann"),  # one misread letter
+    ("Bäckerei Müller", "Bäckerei Müller"), ("Hitzler Bäckerei", "Hitzler Bäckerei"), ("Normal GmbH", "Normal"),
+    ("Asia Markt  Nguyen ", "Asia Markt Nguyen"), ("", ""), (None, ""),
+])
+def test_canonical_store(raw, expected):
+    from grocery.utils import canonical_store
+    assert canonical_store(raw) == expected
+
+
+def test_same_chain_counts_as_same_store():
+    assert same_store("Lidl Dienstleistung GmbH", "LIDL") and same_store("E center", "Edeka")
+    assert not same_store("Aldi", "Lidl")

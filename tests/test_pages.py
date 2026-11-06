@@ -55,7 +55,7 @@ def test_duplicate_warning_matches_same_total_despite_different_store_spelling(s
     button(first, "Save receipt").click().run()
 
     at = no_exc(with_draft("Dad", store="Rewe City").run())
-    assert any("Bibi already added a REWE Markt GmbH receipt" in w.value for w in at.warning), [w.value for w in at.warning]
+    assert any("Bibi already added a REWE receipt" in w.value for w in at.warning), [w.value for w in at.warning]
     other_total = no_exc(with_draft("Dad", store="Rewe City", total=7.0, items=[{"name": "X", "category": "Other", "price": 7.0}]).run())
     assert not any("already added" in w.value for w in other_total.warning)
 
@@ -92,10 +92,10 @@ def test_history_edit_and_delete(store):
     assert at.dataframe[0].value["Store"].tolist() == ["REWE"]
 
     select_history_row(at, 0)
-    at.text_input(key=f"edit_{rid}_0_store").input("REWE City").run()
+    at.selectbox(key=f"edit_{rid}_0_store").set_value("Edeka").run()
     button(at, "Save changes").click().run()
     no_exc(at)
-    assert store[rid]["store"] == "REWE City" and store[rid]["updated_by"] == "Dad" and store[rid]["uploaded_by"] == "Bibi"
+    assert store[rid]["store"] == "Edeka" and store[rid]["updated_by"] == "Dad" and store[rid]["uploaded_by"] == "Bibi"
     assert any("Receipt updated" in x.value for x in at.success)
 
     select_history_row(at, 0)
@@ -198,12 +198,12 @@ def test_history_survives_the_open_receipt_being_deleted_elsewhere(store, monkey
 
 def test_review_corrections_survive_a_visit_to_another_page(store):
     at = no_exc(with_draft("Bibi").run())
-    at.text_input(key="draft1_store").input("Edeka")
+    at.selectbox(key="draft1_store").set_value("Edeka")
     at.number_input(key="draft1_total").set_value(7.25).run()
     at.switch_page("views/dashboard.py").run()
     at.switch_page("views/upload.py").run()
     no_exc(at)
-    assert at.text_input(key="draft1_store").value == "Edeka" and at.number_input(key="draft1_total").value == 7.25
+    assert at.selectbox(key="draft1_store").value == "Edeka" and at.number_input(key="draft1_total").value == 7.25
     button(at, "Save receipt").click().run()
     (saved,) = store.values()
     assert saved["store"] == "Edeka" and saved["total"] == 7.25
@@ -241,3 +241,46 @@ def test_failed_save_keeps_the_draft(store, monkeypatch):
     button(at, "Save receipt").click().run()
     no_exc(at)
     assert any("Couldn't save the receipt" in e.value for e in at.error) and "draft" in at.session_state
+
+
+# --- Stores ---------------------------------------------------------------------------------
+
+def test_store_dropdown_lists_chains_and_maps_raw_names(store):
+    from grocery.config import STORES
+
+    at = no_exc(with_draft("Bibi", store="").run())
+    box = at.selectbox(key="draft1_store")
+    assert box.options[: len(STORES)] == list(STORES) and box.value is None
+
+    at = no_exc(with_draft("Bibi", store="rewe city gmbh").run())  # raw name as on the receipt
+    assert at.selectbox(key="draft1_store").value == "REWE"
+    button(at, "Save receipt").click().run()
+    assert [r["store"] for r in store.values()] == ["REWE"]
+
+
+def test_store_that_is_not_a_chain_is_kept_as_printed(store):
+    at = no_exc(with_draft("Bibi", store="Bäckerei Schmidt").run())
+    assert at.selectbox(key="draft1_store").value == "Bäckerei Schmidt"
+    button(at, "Save receipt").click().run()
+    assert [r["store"] for r in store.values()] == ["Bäckerei Schmidt"]
+
+
+def test_store_dropdown_offers_stores_used_before(store):
+    db_module.save_receipt({"purchased_on": TODAY, "store": "Bäckerei Schmidt", "total": 3.0},
+                           [{"name": "BROT", "category": "Bakery", "price": 3.0}], "Dad")
+    at = no_exc(with_draft("Bibi", store="").run())
+    assert "Bäckerei Schmidt" in at.selectbox(key="draft1_store").options
+
+
+def test_dashboard_spending_by_store(store):
+    for name, total in (("REWE", 30.0), ("Lidl", 10.0), ("REWE", 20.0)):
+        db_module.save_receipt({"purchased_on": TODAY, "store": name, "total": total},
+                               [{"name": "X", "category": "Other", "price": total}], "Bibi")
+    at = make_app(user="Bibi")
+    at.run()
+    at.switch_page("views/dashboard.py").run()
+    no_exc(at)
+    by_store = next(d.value for d in at.dataframe if "store" in d.value.columns)
+    assert by_store["store"].tolist() == ["REWE", "Lidl"]
+    assert by_store["spent"].tolist() == [50.0, 10.0] and by_store["receipts"].tolist() == [2, 1]
+    assert abs(by_store["share"].iloc[0] - 50 / 60) < 1e-9

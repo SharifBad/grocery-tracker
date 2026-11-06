@@ -78,6 +78,12 @@ Measured 2026-11-06 with gemini-3.8-flash on simulated phone photos of 25- and 4
 - **Pixel size doesn't change tokens.** Gemini billed the same at every size from 250 px to full resolution. The fixed shrink to `OCR_SHORT_SIDE = 700` px is only for upload speed and memory (everything was read correctly down to 250 px). The phone still uploads the full photo to the Streamlit server.
 - `extract_receipt` returns `tokens`, and the upload page shows it once a read finishes.
 
+## Stores
+
+- `config.STORES` lists common German chains (REWE, Lidl, Aldi, Edeka, Kaufland, Netto, Penny, Rossmann, dm, Müller, …). Each entry has phrases that identify the chain anywhere in a name, plus words that only count as the *whole* name; "Müller" and "dm" are exact-only, so "Bäckerei Müller" stays a bakery.
+- `utils.canonical_store` maps any name onto a chain, ignoring case, umlauts, punctuation and GmbH/KG. It also catches one misread letter in words of 6+ letters ("Kaufiand"). Anything else is kept as printed, tidied. It's applied to Gemini's answer, the review form, `same_store` and the sheet import. Gemini's prompt also lists the chains.
+- The review form's store field is a dropdown (`accept_new_options`): chains first, then stores used before, and typing a new one is allowed. The dashboard has a "By store" table.
+
 ## Duplicates and backups
 
 - `utils.looks_like_duplicate`: a saved receipt from the same date counts as a duplicate if it has the same total, whatever the store is called (Gemini spells stores inconsistently). Without a total on either side, it falls back to a loose store-name match (`same_store`: same first significant word, or ≥0.8 similarity). The upload page only warns; it never blocks saving.

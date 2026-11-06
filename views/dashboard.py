@@ -40,6 +40,26 @@ else:
         st.subheader("🗓️ By week")
         st.bar_chart(cur.assign(week=cur["purchased_on"].map(week_label)).groupby("week")["price"].sum())
 
+    st.subheader("🏪 By store")
+    by_store = (
+        cur.groupby("store")
+        .agg(spent=("price", "sum"), receipts=("receipt_id", "nunique"))
+        .reset_index()
+        .sort_values("spent", ascending=False)
+    )
+    by_store["share"] = by_store["spent"] / by_store["spent"].sum() if by_store["spent"].sum() else 0.0
+    st.dataframe(
+        by_store,
+        hide_index=True,
+        width="stretch",
+        column_config={
+            "store": "Store",
+            "spent": st.column_config.NumberColumn("Spent (€)", format="€%.2f"),
+            "receipts": st.column_config.NumberColumn("Receipts"),
+            "share": st.column_config.ProgressColumn("Share", format="percent", min_value=0.0, max_value=1.0),
+        },
+    )
+
     st.subheader("👪 By family member")
     by_member = cur.groupby("uploaded_by", as_index=False)["price"].sum()
     by_member.insert(0, "photo", by_member["uploaded_by"].map(avatar_data_uri))

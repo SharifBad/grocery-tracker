@@ -12,7 +12,7 @@ import streamlit as st
 
 from grocery import db
 from grocery.auth import current_user
-from grocery.ui import database_errors, flash, month_picker, receipt_editor
+from grocery.ui import database_errors, flash, month_picker, receipt_editor, store_options
 from grocery.utils import month_bounds, pretty_month
 
 log = logging.getLogger(__name__)
@@ -23,7 +23,8 @@ st.title("🧾 Receipt history")
 flash()
 
 with database_errors("load your receipts"):
-    month = month_picker(db.load_item_lines(), key="history_month")
+    item_lines = db.load_item_lines()
+    month = month_picker(item_lines, key="history_month")
     receipts = db.load_receipts(*month_bounds(month))
 if not receipts:
     st.info(f"No receipts for {pretty_month(month)}.")
@@ -78,7 +79,7 @@ if values_key not in st.session_state:
         "total": float(r["total"]) if r["total"] is not None else None,
         "items": [{k: i[k] for k in ("name", "category", "price")} for i in r["items"]],
     }
-edited = receipt_editor(f"edit_{rid}_{rev}", st.session_state[values_key])
+edited = receipt_editor(f"edit_{rid}_{rev}", st.session_state[values_key], stores=store_options(item_lines["store"].unique()))
 
 
 def done(message):

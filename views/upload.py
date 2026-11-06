@@ -14,7 +14,7 @@ from grocery import photo_editor as photo
 from grocery.auth import current_user
 from grocery.config import UPLOAD_TYPES
 from grocery.extract import ExtractionError, extract_receipt
-from grocery.ui import euro, flash, receipt_editor, show_receipt_file
+from grocery.ui import euro, flash, receipt_editor, show_receipt_file, store_options
 from grocery.utils import today
 
 log = logging.getLogger(__name__)
@@ -100,7 +100,11 @@ if draft["date_guessed"]:
 if draft["purchased_on"] > today():
     st.warning("This date is in the future. Please check it.")
 
-receipt = receipt_editor(f"draft{st.session_state['draft_no']}", draft)
+try:
+    used_stores = db.load_item_lines()["store"].unique()
+except Exception:  # the dropdown still has the chain list
+    used_stores = []
+receipt = receipt_editor(f"draft{st.session_state['draft_no']}", draft, stores=store_options(used_stores))
 
 if receipt["store"] or receipt["total"] is not None:
     try:

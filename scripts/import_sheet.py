@@ -25,7 +25,7 @@ sys.path.insert(0, str(ROOT))
 
 from supabase import create_client  # noqa: E402
 
-from grocery.utils import normalize_category, parse_money  # noqa: E402
+from grocery.utils import canonical_store, normalize_category, parse_money  # noqa: E402
 
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1xTZYrQlT9lVTfv6IMMCSE5zViVq-O7PhYd4zFBX0scE/edit"
 IMPORT_USER = "sheet-import"
@@ -68,7 +68,7 @@ def parse_rows(values):
         rows.append(
             {
                 "purchased_on": purchased_on,
-                "store": store or "Unknown Store",
+                "store": canonical_store(store) or "Unknown Store",
                 "total": total_value,
                 "item": {"name": item or "Item", "category": normalize_category(category), "price": price_value or 0.0},
             }

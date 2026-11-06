@@ -23,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from grocery.config import (
     CATEGORIES,
+    STORES,
     GEMINI_MEDIA_RESOLUTION,
     GEMINI_MEDIA_RESOLUTION_RECHECK,
     GEMINI_MODEL,
@@ -30,7 +31,7 @@ from grocery.config import (
     MAX_ATTEMPTS,
     RETRY_DELAY_S,
 )
-from grocery.utils import normalize_category, today
+from grocery.utils import canonical_store, normalize_category, today
 
 log = logging.getLogger(__name__)
 
@@ -40,7 +41,8 @@ PROMPT = f"""
 Read this grocery receipt and extract it.
 
 - date: purchase date as YYYY-MM-DD, or null if not printed.
-- store: the shop name.
+- store: if the shop is one of these chains, write exactly this name: {", ".join(STORES)}.
+  Otherwise the shop name as printed.
 - total: the final amount paid.
 - items: one entry per purchased line.
   - name: the product name exactly as printed (don't expand abbreviations).
@@ -164,7 +166,7 @@ def extract_receipt(data, mime, on_progress=None):
     return {
         "date": purchased_on,
         "date_guessed": guessed,
-        "store": (parsed.store or "").strip(),
+        "store": canonical_store(parsed.store),
         "total": round(parsed.total, 2) if parsed.total is not None else None,
         "items": [
             {"name": i.name.strip(), "category": normalize_category(i.category), "price": round(i.price, 2)}

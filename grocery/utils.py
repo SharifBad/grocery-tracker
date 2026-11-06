@@ -4,7 +4,7 @@ import difflib
 import re
 from zoneinfo import ZoneInfo
 
-from grocery.config import CATEGORIES, TIMEZONE
+from grocery.config import CATEGORIES, STORES, TIMEZONE
 
 _CATEGORY_LOOKUP = {c.lower(): c for c in CATEGORIES}
 
@@ -72,6 +72,45 @@ def pretty_month(label):
     return datetime.datetime.strptime(label, "%Y-%m").strftime("%B %Y")
 
 
+_UMLAUTS = str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"})
+_LEGAL = {"gmbh", "mbh", "ag", "kg", "ohg", "co", "ek", "e k", "ug", "se", "kgaa"}
+
+
+def _plain(text):
+    """'dm-drogerie markt GmbH' -> 'dm drogerie markt': lower case, no umlauts/punctuation/legal suffixes."""
+    words = re.findall(r"[0-9a-z]+", str(text or "").casefold().translate(_UMLAUTS))
+    return " ".join(w for w in words if w not in _LEGAL)
+
+
+_STORE_PHRASES = [(_plain(p), name) for name, (phrases, _) in STORES.items() for p in phrases]
+_STORE_PHRASES.sort(key=lambda pair: -len(pair[0]))  # longest phrase wins
+_STORE_EXACT = {_plain(w): name for name, (_, exact) in STORES.items() for w in exact}
+_STORE_WORDS = {p: name for p, name in _STORE_PHRASES if " " not in p and len(p) >= 6}
+
+
+def canonical_store(name):
+    """The chain's standard name if `name` is one of config.STORES, else the name as given (tidied).
+
+    'REWE Markt GmbH', 'Rewe City' -> 'REWE'; 'Lidl Dienstleistung GmbH & Co. KG' -> 'Lidl';
+    'Kaufiand' (misread) -> 'Kaufland'; 'Bäckerei Schmidt' -> 'Bäckerei Schmidt'.
+    """
+    raw = " ".join(str(name or "").split())
+    plain = _plain(raw)
+    if not plain:
+        return raw
+    if plain in _STORE_EXACT:
+        return _STORE_EXACT[plain]
+    padded = f" {plain} "
+    for phrase, store in _STORE_PHRASES:
+        if f" {phrase} " in padded:
+            return store
+    for word in plain.split():  # one misread letter, e.g. 'Kaufiand', 'Rossmamn' (not 'Normal' -> Norma)
+        for chain_word, store in _STORE_WORDS.items():
+            if len(word) == len(chain_word) >= 6 and sum(a != b for a, b in zip(word, chain_word)) == 1:
+                return store
+    return raw
+
+
 # Words that don't identify a shop ("REWE Markt GmbH" and "REWE" are the same store).
 _STORE_FILLER = {"gmbh", "mbh", "ag", "kg", "ohg", "co", "ek", "e", "k", "markt", "supermarkt", "filiale", "und", "the"}
 
@@ -82,7 +121,9 @@ def store_key(name):
 
 
 def same_store(a, b):
-    """Loose store-name match: same first significant word, or very similar names."""
+    """Loose store-name match: same chain, same first significant word, or very similar names."""
+    if canonical_store(a) and canonical_store(a) == canonical_store(b):
+        return True
     ka, kb = store_key(a), store_key(b)
     if not ka or not kb:
         return False

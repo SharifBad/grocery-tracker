@@ -9,8 +9,8 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from grocery.config import AVATARS, CATEGORIES
-from grocery.utils import month_label, normalize_category, pretty_month, today
+from grocery.config import AVATARS, CATEGORIES, STORES
+from grocery.utils import canonical_store, month_label, normalize_category, pretty_month, today
 
 log = logging.getLogger(__name__)
 
@@ -111,7 +111,13 @@ def items_frame(records):
     return df.astype({"name": "object", "category": "object", "price": "float64"})
 
 
-def receipt_editor(key, values):
+def store_options(used=()):
+    """The known chains first (config.STORES), then other stores already used, for the store dropdown."""
+    others = sorted({canonical_store(s) for s in used if s} - set(STORES) - {"", "Unknown Store"}, key=str.casefold)
+    return list(STORES) + others
+
+
+def receipt_editor(key, values, stores=None):
     """Editable receipt header + items table. Returns the cleaned values.
 
     `values` ({purchased_on, store, total, items}) is updated in place with every edit. Keep it in
@@ -122,7 +128,18 @@ def receipt_editor(key, values):
     c1, c2, c3 = st.columns(3)
     # These widgets keep their identity by key, so passing the latest values here never resets them.
     purchased_on = c1.date_input("Date", values["purchased_on"], key=f"{key}_date", format="YYYY-MM-DD")
-    store = c2.text_input("Store", values["store"], key=f"{key}_store")
+    # Pick a chain from the list or type any other shop; typed names are matched to the list too.
+    options = list(stores or store_options())
+    current = canonical_store(values["store"])
+    if current and current not in options:
+        options.append(current)
+    chosen = c2.selectbox(
+        "Store", options, index=options.index(current) if current else None, key=f"{key}_store",
+        accept_new_options=True, placeholder="Choose or type",
+    )
+    store = canonical_store(chosen)
+    if chosen and store != chosen.strip():
+        c2.caption(f"Saved as **{store}**")
     # No minimum: refund receipts can have a negative total.
     total = c3.number_input("Receipt total (€)", value=values["total"], step=0.01, format="%.2f", key=f"{key}_total")
 
@@ -163,7 +180,7 @@ def receipt_editor(key, values):
 
     return {
         "purchased_on": purchased_on,
-        "store": store.strip(),
+        "store": store,
         "total": None if total is None else round(total, 2),
         "items": clean,
     }
