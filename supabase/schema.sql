@@ -32,6 +32,18 @@ create index if not exists items_receipt_id_idx on items (receipt_id);
 alter table receipts enable row level security;
 alter table items enable row level security;
 
+-- Category corrections, remembered per item name (as normalised by utils.item_key) and applied
+-- automatically the next time that item is read.
+create table if not exists category_memory (
+  name_key   text primary key,
+  category   text not null,
+  updated_by text,
+  updated_at timestamptz not null default now()
+);
+
+alter table category_memory enable row level security;
+revoke all on category_memory from anon, authenticated;
+
 -- One row per item with its receipt's date/store/uploader: what the dashboard reads.
 create or replace view item_lines with (security_invoker = true) as
 select i.id as item_id, i.receipt_id, r.purchased_on, r.store, r.uploaded_by,

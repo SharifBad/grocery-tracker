@@ -32,6 +32,7 @@ def _invalidate():
     load_item_lines.clear()
     load_receipts.clear()
     find_duplicates.clear()
+    load_category_memory.clear()
 
 
 # --- Reads (cached; every write calls _invalidate) ---
@@ -123,3 +124,22 @@ def delete_receipt(receipt_id):
         client().table("receipts").delete().eq("id", receipt_id).execute()  # items cascade
     finally:
         _invalidate()
+
+
+# --- Remembered category corrections (table category_memory) ---
+@st.cache_data(ttl=60, show_spinner=False)
+def load_category_memory():
+    """{item_key: category} for items someone re-categorised before."""
+    rows = _fetch_all(lambda: client().table("category_memory").select("name_key, category").order("name_key"))
+    return {r["name_key"]: r["category"] for r in rows}
+
+
+def remember_categories(corrections, user):
+    """Store {item_key: category} so those items get that category automatically next time."""
+    if not corrections:
+        return
+    rows = [{"name_key": k, "category": c, "updated_by": user} for k, c in corrections.items() if k]
+    try:
+        client().table("category_memory").upsert(rows, on_conflict="name_key").execute()
+    finally:
+        load_category_memory.clear()

@@ -38,3 +38,12 @@ def no_exc(at):
 
 def button(at, text):
     return next(b for b in at.button if text in b.label)
+
+
+def save_receipt_for_test(store_name, items, user="Bibi", day=None, total=None):
+    """Save a receipt through grocery.db (the `store` fixture's in-memory fake). Returns its id."""
+    from grocery import db
+    from grocery.utils import today
+
+    total = total if total is not None else sum(i["price"] for i in items)
+    return db.save_receipt({"purchased_on": day or today(), "store": store_name, "total": total}, items, user)

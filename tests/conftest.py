@@ -53,4 +53,12 @@ def store(monkeypatch):
     monkeypatch.setattr(db, "find_duplicates", find_duplicates)
     monkeypatch.setattr(db, "delete_receipt", lambda rid: receipts.pop(rid))
     monkeypatch.setattr(db, "export_csv", lambda: b"receipt_id\n")
+
+    memory = {}
+    monkeypatch.setattr(db, "load_category_memory", lambda: dict(memory))
+    monkeypatch.setattr(db, "remember_categories", lambda corrections, user: memory.update(corrections))
+    receipts_fixture_extras.update(memory=memory)
     return receipts
+
+
+receipts_fixture_extras = {}  # the store fixture's category memory, for tests to inspect

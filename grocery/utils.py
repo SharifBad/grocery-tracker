@@ -139,3 +139,8 @@ def looks_like_duplicate(existing, store, total):
     if total is not None and existing.get("total") is not None:
         return abs(float(existing["total"]) - float(total)) < 0.005
     return same_store(existing.get("store"), store)
+
+
+def item_key(name):
+    """How an item is recognised again: its name as printed, ignoring case, umlauts and punctuation."""
+    return _plain(name)

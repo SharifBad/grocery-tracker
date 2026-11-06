@@ -13,7 +13,7 @@ import streamlit as st
 from grocery import db
 from grocery.auth import current_user
 from grocery.ui import database_errors, flash, month_picker, receipt_editor, store_options
-from grocery.utils import month_bounds, pretty_month
+from grocery.utils import item_key, month_bounds, pretty_month
 
 log = logging.getLogger(__name__)
 SELECTED = "history_selected"  # id of the receipt being viewed
@@ -103,6 +103,12 @@ if c1.button("💾 Save changes", key=f"save_{rid}", type="primary", disabled=no
                         user=current_user(), receipt_id=rid)
     except Exception:
         failed("save")
+    before = {item_key(i["name"]): i["category"] for i in r["items"]}
+    corrections = {item_key(i["name"]): i["category"] for i in edited["items"] if before.get(item_key(i["name"])) != i["category"]}
+    try:
+        db.remember_categories(corrections, current_user())
+    except Exception:  # never block saving over this
+        log.warning("Couldn't remember category corrections", exc_info=True)
     done("Receipt updated.")
 with c2.popover("🗑️ Delete", key=f"delete_menu_{rid}", width="stretch"):
     st.write(f"Delete this {r['store']} receipt and its {len(r['items'])} items? This can't be undone.")
