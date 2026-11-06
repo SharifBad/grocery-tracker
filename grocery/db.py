@@ -1,7 +1,12 @@
 """All Supabase access: receipts/items tables and the item_lines view."""
+import csv
+import io
+
 import pandas as pd
 import streamlit as st
 from supabase import create_client
+
+from grocery.utils import looks_like_duplicate
 
 PAGE_SIZE = 1000  # PostgREST's default max rows per request
 ITEM_COLUMNS = ["item_id", "receipt_id", "purchased_on", "store", "uploaded_by", "name", "category", "price"]
@@ -58,11 +63,33 @@ def load_receipts(start, end):
 
 @st.cache_data(ttl=60, show_spinner=False)
 def find_duplicates(purchased_on, store, total):
-    """Receipts that look like the same shopping trip (same date, store and total)."""
-    query = client().table("receipts").select("id, uploaded_by, created_at").eq("purchased_on", purchased_on.isoformat())
-    query = query.eq("store", store)
-    query = query.is_("total", "null") if total is None else query.eq("total", total)
-    return query.execute().data
+    """Saved receipts from the same date that look like this one (see utils.looks_like_duplicate)."""
+    same_day = (
+        client().table("receipts").select("id, store, total, uploaded_by, created_at")
+        .eq("purchased_on", purchased_on.isoformat()).execute().data
+    )
+    return [r for r in same_day if looks_like_duplicate(r, store, total)]
+
+
+EXPORT_COLUMNS = ["receipt_id", "date", "store", "receipt_total", "added_by", "added_at",
+                  "edited_by", "edited_at", "item", "category", "price"]
+
+
+def export_csv():
+    """Every receipt and item as CSV bytes (one row per item), for backups. Always fresh, not cached."""
+    receipts = _fetch_all(
+        lambda: client().table("receipts").select("*, items(name, category, price)")
+        .order("purchased_on").order("created_at").order("id")
+    )
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(EXPORT_COLUMNS)
+    for r in receipts:
+        receipt = [r["id"], r["purchased_on"], r["store"], "" if r["total"] is None else r["total"],
+                   r["uploaded_by"], r["created_at"], r.get("updated_by") or "", r.get("updated_at") or ""]
+        for item in r["items"] or [{"name": "", "category": "", "price": ""}]:
+            writer.writerow(receipt + [item["name"], item["category"], item["price"]])
+    return buf.getvalue().encode("utf-8-sig")  # BOM so Excel shows umlauts correctly
 
 
 # --- Writes ---

@@ -1,5 +1,7 @@
-"""Pure helpers (no Streamlit) for money, categories and month/week labels."""
+"""Pure helpers (no Streamlit) for money, categories, month/week labels and duplicate matching."""
 import datetime
+import difflib
+import re
 
 from grocery.config import CATEGORIES
 
@@ -44,3 +46,31 @@ def month_bounds(label):
 
 def pretty_month(label):
     return datetime.datetime.strptime(label, "%Y-%m").strftime("%B %Y")
+
+
+# Words that don't identify a shop ("REWE Markt GmbH" and "REWE" are the same store).
+_STORE_FILLER = {"gmbh", "mbh", "ag", "kg", "ohg", "co", "ek", "e", "k", "markt", "supermarkt", "filiale", "und", "the"}
+
+
+def store_key(name):
+    words = re.findall(r"[0-9a-zäöüß]+", str(name or "").casefold())
+    return " ".join(w for w in words if w not in _STORE_FILLER)
+
+
+def same_store(a, b):
+    """Loose store-name match: same first significant word, or very similar names."""
+    ka, kb = store_key(a), store_key(b)
+    if not ka or not kb:
+        return False
+    return ka.split()[0] == kb.split()[0] or difflib.SequenceMatcher(None, ka, kb).ratio() >= 0.8
+
+
+def looks_like_duplicate(existing, store, total):
+    """Is `existing` (a saved receipt from the same date) probably the receipt being added?
+
+    Same date and same total is enough, however Gemini spelled the store. Without a total on
+    either side, fall back to a loose store-name match.
+    """
+    if total is not None and existing.get("total") is not None:
+        return abs(float(existing["total"]) - float(total)) < 0.005
+    return same_store(existing.get("store"), store)

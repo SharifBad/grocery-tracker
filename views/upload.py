@@ -85,14 +85,12 @@ receipt = receipt_editor(
     items=draft["items"],
 )
 
-if receipt["store"]:
-    dups = db.find_duplicates(receipt["purchased_on"], receipt["store"], receipt["total"])
-    if dups:
-        who = ", ".join(sorted({d["uploaded_by"] for d in dups}))
+if receipt["store"] or receipt["total"] is not None:
+    for dup in db.find_duplicates(receipt["purchased_on"], receipt["store"], receipt["total"]):
+        amount = f" for {euro(float(dup['total']))}" if dup.get("total") is not None else ""
         st.warning(
-            f"⚠️ {who} already added a {receipt['store']} receipt from {receipt['purchased_on']:%d %b}"
-            + (f" for {euro(receipt['total'])}" if receipt["total"] is not None else "")
-            + ". Saving again will count it twice."
+            f"⚠️ {dup['uploaded_by']} already added a {dup['store']} receipt from "
+            f"{receipt['purchased_on']:%d %b}{amount}. If it's the same one, saving again will count it twice."
         )
 
 b1, b2 = st.columns([2, 1])
