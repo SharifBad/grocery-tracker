@@ -11,13 +11,15 @@ LOW image detail occasionally misreads a blurry photo. The receipt checks itself
 don't add up to the printed total, it is read once more at MEDIUM image detail.
 """
 import datetime
+import logging
 import time
 from typing import Literal
 
+import httpx
 import streamlit as st
 from google import genai
-from google.genai import types
-from pydantic import BaseModel, ConfigDict, Field
+from google.genai import errors, types
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from grocery.config import (
     CATEGORIES,
@@ -28,28 +30,23 @@ from grocery.config import (
     MAX_ATTEMPTS,
     RETRY_DELAY_S,
 )
-from grocery.utils import normalize_category
+from grocery.utils import canonical_store, normalize_category, today
+
+log = logging.getLogger(__name__)
 
 ADDS_UP_TOLERANCE = 0.05  # euros; rounding on receipts
 
-PROMPT = f"""
+PROMPT = """
 Read this grocery receipt and extract it.
-
-- date: purchase date as YYYY-MM-DD, or null if not printed.
-- store: the shop name.
-- total: the final amount paid.
-- items: one entry per purchased line.
-  - name: the product name exactly as printed (don't expand abbreviations).
-  - price: final price paid for that line (quantity x unit price, after any line discount).
-    If a discount can't be tied to an item, add it as its own item named "Discount" with a
-    negative price and category Other.
-  - category, one of {", ".join(CATEGORIES)}:
-    Produce = fruit, vegetables, fresh herbs; Dairy = milk, cheese, yogurt, butter, eggs;
-    Meat = meat, poultry, fish, seafood; Bakery = bread, rolls, pastries, cakes;
-    Pantry = dry and canned goods, pasta, rice, spices, oils, snacks, sweets, drinks, frozen food;
-    Household = cleaning products, toiletries, paper goods, other non-food;
-    Other = bottle deposits, bags, anything else.
-Skip subtotal, tax, payment, card and change lines.
+- date: YYYY-MM-DD, or null if not printed. store: the shop name. total: the amount paid.
+- items: one per purchased line. name: exactly as printed. price: what was paid for the line
+  (after line discounts); a discount not tied to an item is its own item "Discount", negative, Other.
+- category guide: Vegetables incl. salad, potatoes, herbs. Meat & Fish incl. sausage, cold cuts.
+  Bakery: bread, toast, crispbread, cakes. Pantry: pasta, rice, flour, muesli, cans, oil, spices,
+  sauces, coffee, tea. Snacks & Sweets: chips, nuts, chocolate, biscuits, ice cream. Frozen: not ice
+  cream. Cleaning & Household: detergent, toilet paper, bin bags. Skin & Body Care: cosmetics,
+  shampoo, toothpaste. Health: medicine, plasters. Other: Pfand (Leergut returns negative), bags.
+Skip subtotal, tax, payment and change lines.
 JSON keys: d=date, s=store, t=total, i=items; per item n=name, c=category, p=price.
 """
 
@@ -60,6 +57,12 @@ class ExtractedItem(BaseModel):
     name: str = Field(alias="n")
     category: Literal[tuple(CATEGORIES)] = Field(alias="c")  # type: ignore[valid-type]
     price: float = Field(alias="p")
+
+    @field_validator("category", mode="before")
+    @classmethod
+    def _known_category(cls, value):
+        # Gemini sees the exact list; if it still answers something else, don't fail the whole read.
+        return normalize_category(value)
 
 
 class ExtractedReceipt(BaseModel):
@@ -86,14 +89,21 @@ def _client():
     return genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
 
 
+RETRYABLE_CODES = {408, 429, 500, 502, 503, 504}  # rate limit, timeouts, server-side trouble
+
+
 def _retryable(err):
-    text = str(err)
-    return getattr(err, "code", None) in (429, 503) or any(
-        marker in text for marker in ("503", "429", "UNAVAILABLE")
-    ) or "overloaded" in text.lower()
+    if isinstance(err, errors.APIError):
+        return err.code in RETRYABLE_CODES
+    return isinstance(err, (httpx.TransportError, TimeoutError, ConnectionError))  # network hiccups
 
 
-def _read(data, mime, media_resolution, on_progress):
+# Added only when a long receipt comes in several photos.
+MULTI_PART_NOTE = "The images are parts of ONE long receipt, top to bottom; they may overlap. List each item once.\n"
+MAX_PARTS = 3
+
+
+def _read(parts, media_resolution, on_progress):
     """One extraction call (with busy-retries). Returns (parsed receipt, billed tokens)."""
     config = types.GenerateContentConfig(
         response_mime_type="application/json",
@@ -105,13 +115,16 @@ def _read(data, mime, media_resolution, on_progress):
         try:
             response = _client().models.generate_content(
                 model=GEMINI_MODEL,
-                contents=[types.Part.from_bytes(data=data, mime_type=mime), PROMPT],
+                contents=[types.Part.from_bytes(data=d, mime_type=m) for d, m in parts]
+                + [PROMPT + (MULTI_PART_NOTE if len(parts) > 1 else "")],
                 config=config,
             )
             break
         except Exception as e:
             if not _retryable(e):
-                raise ExtractionError(f"Gemini error: {e}") from e
+                log.exception("Gemini call failed")
+                code = f" (error {e.code})" if isinstance(e, errors.APIError) else ""
+                raise ExtractionError(f"Gemini couldn't read this file{code}. Try another photo, or enter it manually.") from e
             if attempt == MAX_ATTEMPTS:
                 raise ExtractionError(f"Gemini is still busy after {MAX_ATTEMPTS} attempts. Try again in a minute.") from e
             if on_progress:
@@ -129,30 +142,38 @@ def _read(data, mime, media_resolution, on_progress):
     return parsed, tokens
 
 
-def extract_receipt(data, mime, on_progress=None):
+def extract_receipt(data, mime=None, on_progress=None):
     """Return {date, date_guessed, store, total, items: [{name, category, price}], tokens}.
+
+    `data` is one file's bytes (with `mime`), or a list of (bytes, mime) for a long receipt
+    photographed in up to MAX_PARTS parts, read together in one call.
 
     on_progress(message) is called with status updates (busy retries, double-checking).
     Raises ExtractionError with a user-facing message.
     """
-    parsed, tokens = _read(data, mime, GEMINI_MEDIA_RESOLUTION, on_progress)
+    parts = list(data)[:MAX_PARTS] if isinstance(data, (list, tuple)) else [(data, mime)]
+    parsed, tokens = _read(parts, GEMINI_MEDIA_RESOLUTION, on_progress)
     if not parsed.adds_up():
         if on_progress:
             on_progress("🔍 The items don't add up to the total, so reading it again in more detail…")
-        second, more_tokens = _read(data, mime, GEMINI_MEDIA_RESOLUTION_RECHECK, on_progress)
-        tokens += more_tokens
-        if second.gap() <= parsed.gap():  # keep whichever read is closer to adding up
-            parsed = second
+        try:
+            second, more_tokens = _read(parts, GEMINI_MEDIA_RESOLUTION_RECHECK, on_progress)
+        except ExtractionError:  # the first read is still usable; the review step flags the gap
+            log.warning("Detailed re-read failed; keeping the first read", exc_info=True)
+        else:
+            tokens += more_tokens
+            if second.gap() <= parsed.gap():  # keep whichever read is closer to adding up
+                parsed = second
 
     try:
         purchased_on, guessed = datetime.date.fromisoformat(parsed.date or ""), False
     except ValueError:
-        purchased_on, guessed = datetime.date.today(), True
+        purchased_on, guessed = today(), True
 
     return {
         "date": purchased_on,
         "date_guessed": guessed,
-        "store": (parsed.store or "").strip(),
+        "store": canonical_store(parsed.store),
         "total": round(parsed.total, 2) if parsed.total is not None else None,
         "items": [
             {"name": i.name.strip(), "category": normalize_category(i.category), "price": round(i.price, 2)}

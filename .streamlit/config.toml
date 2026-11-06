@@ -1,0 +1,6 @@
+# Streamlit settings (committed; secrets go in secrets.toml, which is gitignored).
+
+[client]
+# Unexpected errors show a generic message instead of a code traceback; details are in the
+# Streamlit Cloud logs. Locally, override with: STREAMLIT_CLIENT_SHOW_ERROR_DETAILS=full
+showErrorDetails = "none"

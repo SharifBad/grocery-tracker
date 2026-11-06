@@ -23,9 +23,41 @@ JPEG_QUALITY = 80
 WORKING_SHORT_SIDE = 2000     # uploads are downscaled to this on load so editing stays fast
 
 
+MIN_SIDE = 50  # smaller than this can't be a readable receipt
+
+
+class UnusableImage(ValueError):
+    pass
+
+
+def _to_rgb(img):
+    """RGB for any input mode: transparency goes onto white paper; 16-bit/float images are rescaled."""
+    if img.mode in ("I", "I;16", "I;16B", "I;16L", "I;16N", "F"):
+        a = np.asarray(img, dtype=float)
+        span = float(a.max() - a.min()) or 1.0
+        img = Image.fromarray(((a - a.min()) / span * 255).astype("uint8"), "L")
+    if img.mode in ("RGBA", "LA", "PA") or (img.mode == "P" and "transparency" in img.info):
+        rgba = img.convert("RGBA")
+        paper = Image.new("RGB", rgba.size, "white")
+        paper.paste(rgba, mask=rgba.getchannel("A"))
+        return paper
+    return img.convert("RGB")
+
+
 def load_photo(data, max_short_side=None):
-    """Decode an uploaded photo, applying the phone's EXIF rotation; optionally downscale."""
-    img = ImageOps.exif_transpose(Image.open(io.BytesIO(data))).convert("RGB")
+    """Decode an uploaded photo, applying the phone's EXIF rotation; optionally downscale.
+
+    Raises UnusableImage for files that aren't images or are too small to read.
+    """
+    try:
+        img = Image.open(io.BytesIO(data))
+        if max_short_side and img.format == "JPEG":
+            img.draft("RGB", (max_short_side, max_short_side))  # decode big JPEGs at reduced size
+        img = _to_rgb(ImageOps.exif_transpose(img))
+    except Exception as e:  # not an image, truncated, decompression bomb, ...
+        raise UnusableImage("Couldn't open that image. Try a JPG or PNG photo.") from e
+    if min(img.size) < MIN_SIDE:
+        raise UnusableImage(f"That image is only {img.width} × {img.height} px, too small to read.")
     if max_short_side and min(img.size) > max_short_side:
         scale = max_short_side / min(img.size)
         img = img.resize((round(img.width * scale), round(img.height * scale)), Image.Resampling.LANCZOS)
@@ -91,8 +123,20 @@ def detect_receipt_box(img):
     )
 
 
+def clamp_box(box, size, min_side=10):
+    """Fit a (left, top, right, bottom) box inside an image of `size`; None if too little is left."""
+    w, h = size
+    left, top, right, bottom = (round(v) for v in box)
+    left, right = max(0, min(left, w)), max(0, min(right, w))
+    top, bottom = max(0, min(top, h)), max(0, min(bottom, h))
+    if right - left < min_side or bottom - top < min_side:
+        return None
+    return (left, top, right, bottom)
+
+
 def prepare_for_gemini(img, box=None, short_side=OCR_SHORT_SIDE):
     """Crop, convert to grayscale, shrink and JPEG-encode. Returns the JPEG bytes."""
+    box = clamp_box(box, img.size) if box else None
     if box:
         img = img.crop(box)
     img = ImageOps.grayscale(img)

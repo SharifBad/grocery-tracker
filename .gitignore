@@ -6,3 +6,11 @@ __pycache__/
 .venv/
 venv/
 .DS_Store
+
+# Test tooling
+.pytest_cache/
+tests/sql/node_modules/
+
+# Originals the logo/avatars were made from (the repo is public; only cartoon crops are committed)
+logo.jpeg
+logo-cartoon-original.png

@@ -1,11 +1,18 @@
 """Streamlit widgets shared between pages."""
-import datetime
+import base64
+import io
+import logging
+from contextlib import contextmanager
+from html import escape
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
-from grocery.config import CATEGORIES
-from grocery.utils import month_label, normalize_category, pretty_month
+from grocery.config import AVATARS, CATEGORIES, STORES
+from grocery.utils import canonical_store, month_label, normalize_category, pretty_month, today
+
+log = logging.getLogger(__name__)
 
 ITEM_FIELDS = ["name", "category", "price"]
 
@@ -23,10 +30,79 @@ def flash(message=None):
         st.success(msg)
 
 
+@contextmanager
+def database_errors(action):
+    """Show a friendly message instead of a traceback if the database can't be reached, then stop."""
+    try:
+        yield
+    except Exception:  # st.stop / st.rerun are BaseException, so they pass through
+        log.exception("Database error while trying to %s", action)
+        st.error(f"Couldn't {action}. The database may be waking up or unreachable. Wait a moment and reload the page.")
+        st.stop()
+
+
+@st.cache_data(show_spinner=False, max_entries=20)
+def _data_uri(data):
+    from PIL import Image
+
+    fmt = (Image.open(io.BytesIO(data)).format or "PNG").lower()
+    return f"data:image/{fmt};base64," + base64.b64encode(data).decode()
+
+
+def crisp_image(image, width, caption=None, alt=""):
+    """Show an image `width` CSS px wide, sharp on phones and Retina screens.
+
+    st.image(width=N) resizes the picture on the server to exactly N pixels, which a 2-3x
+    screen then stretches and blurs. Here the full-resolution file goes to the browser,
+    which scales it down itself. `image` is a file path or bytes.
+    """
+    data = Path(image).read_bytes() if isinstance(image, (str, Path)) else image
+    html = f'<img src="{_data_uri(data)}" width="{int(width)}" alt="{escape(alt)}" style="display:block;border-radius:0.5rem">'
+    if caption:
+        html += f'<div style="font-size:0.875rem;opacity:0.7;margin-top:0.25rem">{escape(caption)}</div>'
+    st.markdown(html, unsafe_allow_html=True)
+
+
+def brand_header(logo, title, logo_px=72):
+    """Logo and page title on one line, vertically centred; on narrow phones the title wraps below.
+
+    One HTML block instead of st.container + st.title, whose built-in spacing left the logo
+    lower than the title and touching the content below it.
+    """
+    data = Path(logo).read_bytes()
+    st.markdown(
+        f'''<div style="display:flex;flex-wrap:wrap;align-items:center;gap:0.5rem 1rem;margin:0 0 1.5rem">
+          <img src="{_data_uri(data)}" width="{logo_px}" height="{logo_px}" alt=""
+               style="display:block;flex:none;border-radius:0.75rem;object-fit:cover">
+          <h1 style="margin:0;padding:0;line-height:1.15">{escape(title)}</h1>
+        </div>''',
+        unsafe_allow_html=True,
+    )
+
+
+def avatar(name):
+    """Path of a family member's profile photo, or None (then show 👤)."""
+    path = AVATARS / f"{str(name or '').strip().casefold()}.png"
+    return str(path) if path.is_file() else None
+
+
+@st.cache_data(show_spinner=False)
+def avatar_data_uri(name, size=96):  # 96 px source for a ~32 px cell: sharp at 3x
+    """Small inline copy of the profile photo for table image columns (None if there is none)."""
+    from PIL import Image
+
+    path = avatar(name)
+    if not path:
+        return None
+    buf = io.BytesIO()
+    Image.open(path).resize((size, size), Image.Resampling.LANCZOS).save(buf, "PNG")
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
 def month_picker(item_lines, key):
     """Selectbox of months that have data (plus the current month), newest first."""
     months = set(item_lines["purchased_on"].map(month_label)) if not item_lines.empty else set()
-    months.add(month_label(datetime.date.today()))
+    months.add(month_label(today()))
     return st.selectbox("Month", sorted(months, reverse=True), format_func=pretty_month, key=key)
 
 
@@ -35,21 +111,46 @@ def items_frame(records):
     return df.astype({"name": "object", "category": "object", "price": "float64"})
 
 
-def receipt_editor(key, *, purchased_on, store, total, items):
+def store_options(used=()):
+    """The known chains first (config.STORES), then other stores already used, for the store dropdown."""
+    others = sorted({canonical_store(s) for s in used if s} - set(STORES) - {"", "Unknown Store"}, key=str.casefold)
+    return list(STORES) + others
+
+
+def receipt_editor(key, values, stores=None):
     """Editable receipt header + items table. Returns the cleaned values.
 
-    Widget keys are derived from `key`; pass a new key to reset the editor to new data.
+    `values` ({purchased_on, store, total, items}) is updated in place with every edit. Keep it in
+    session state (like the upload draft) and edits survive the form going off screen, e.g. a
+    visit to another page: Streamlit drops widget state then, and the form restarts from `values`.
+    Widget keys are derived from `key`; pass a new key to reset the form to new data.
     """
     c1, c2, c3 = st.columns(3)
-    purchased_on = c1.date_input("Date", purchased_on, key=f"{key}_date", format="YYYY-MM-DD")
-    store = c2.text_input("Store", store, key=f"{key}_store")
-    total = c3.number_input(
-        "Receipt total (€)", value=total, min_value=0.0, step=0.01, format="%.2f", key=f"{key}_total"
+    # These widgets keep their identity by key, so passing the latest values here never resets them.
+    purchased_on = c1.date_input("Date", values["purchased_on"], key=f"{key}_date", format="YYYY-MM-DD")
+    # Pick a chain from the list or type any other shop; typed names are matched to the list too.
+    options = list(stores or store_options())
+    current = canonical_store(values["store"])
+    if current and current not in options:
+        options.append(current)
+    chosen = c2.selectbox(
+        "Store", options, index=options.index(current) if current else None, key=f"{key}_store",
+        accept_new_options=True, placeholder="Choose or type",
     )
+    store = canonical_store(chosen)
+    if chosen and store != chosen.strip():
+        c2.caption(f"Saved as **{store}**")
+    # No minimum: refund receipts can have a negative total.
+    total = c3.number_input("Receipt total (€)", value=values["total"], step=0.01, format="%.2f", key=f"{key}_total")
 
+    # The data editor resets whenever its input data changes, so its input stays fixed while it is
+    # on screen and is refreshed from `values` only when the editor is created anew.
+    items_key, base_key = f"{key}_items", f"{key}_items_base"
+    if items_key not in st.session_state or base_key not in st.session_state:
+        st.session_state[base_key] = list(values["items"])
     edited = st.data_editor(
-        items_frame(items),
-        key=f"{key}_items",
+        items_frame(st.session_state[base_key]),
+        key=items_key,
         num_rows="dynamic",
         hide_index=True,
         width="stretch",
@@ -68,6 +169,7 @@ def receipt_editor(key, *, purchased_on, store, total, items):
         price = 0.0 if pd.isna(row["price"]) else round(float(row["price"]), 2)
         clean.append({"name": name, "category": normalize_category(row["category"]), "price": price})
 
+    values.update(purchased_on=purchased_on, store=store, total=total, items=clean)
     items_sum = round(sum(i["price"] for i in clean), 2)
     st.caption(f"{len(clean)} items · add up to {euro(items_sum)}")
     if total is not None and abs(items_sum - total) > 0.05:
@@ -78,7 +180,7 @@ def receipt_editor(key, *, purchased_on, store, total, items):
 
     return {
         "purchased_on": purchased_on,
-        "store": store.strip(),
+        "store": store,
         "total": None if total is None else round(total, 2),
         "items": clean,
     }
