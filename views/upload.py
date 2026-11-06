@@ -13,7 +13,7 @@ from grocery import db
 from grocery import photo_editor as photo
 from grocery.auth import current_user
 from grocery.config import UPLOAD_TYPES
-from grocery.extract import ExtractionError, extract_receipt
+from grocery.extract import MAX_PARTS, ExtractionError, extract_receipt
 from grocery.ui import euro, flash, receipt_editor, show_receipt_file, store_options
 from grocery.utils import today
 
@@ -33,7 +33,7 @@ def start_draft(**fields):
     st.session_state["draft_no"] = st.session_state.get("draft_no", 0) + 1  # fresh widget keys
     st.session_state[DRAFT] = {
         "purchased_on": today(), "date_guessed": False, "store": "", "total": None, "items": [],
-        "file": None, "mime": None, "filename": None, **fields,
+        "files": [], **fields,
     }
 
 
@@ -58,29 +58,30 @@ if draft is None or st.session_state.get(PHOTO_OPEN):
         st.info("Change the photo or crop, then read it again. Until you do, your items are kept.")
         st.button("← Back to the items", on_click=lambda: st.session_state.pop(PHOTO_OPEN, None))
     uploaded = st.file_uploader(
-        "Receipt photo or PDF", type=UPLOAD_TYPES, key=f"upload_{st.session_state.get('upload_no', 0)}"
+        "Receipt photo or PDF", type=UPLOAD_TYPES, accept_multiple_files=True,
+        key=f"upload_{st.session_state.get('upload_no', 0)}",
+        help=f"Long receipt? Add up to {MAX_PARTS} photos, top to bottom.",
     )
-    error = photo.sync_upload(uploaded, page_changed=page_changed)
-    if error:
-        st.error(error)
-    if photo.has_photo() and uploaded is None:
+    for message in photo.sync_upload(uploaded, page_changed=page_changed):
+        st.warning(message)
+    if photo.has_photo() and not uploaded:
         st.caption("Using the photo you added earlier. Upload another one to replace it.")
     ready = photo.photo_editor() if photo.has_photo() else None
 
     c1, c2 = st.columns([2, 1])
     read_label = "🔄 Read again (replaces your items)" if draft else "✨ Read receipt with Gemini"
     if c1.button(read_label, type="primary", disabled=ready is None, width="stretch"):
-        data, mime, filename = ready
+        parts = [(data, mime) for data, mime, _ in ready]
         with st.status("Reading your receipt with Gemini…", expanded=True) as status:
             try:
-                result = extract_receipt(data, mime, on_progress=status.write)
+                result = extract_receipt(parts, on_progress=status.write)
             except ExtractionError as e:
                 status.update(label="❌ Couldn't read the receipt", state="error")
                 st.error(str(e))
                 st.stop()
             status.update(label=f"✅ Done ({result['tokens']:,} Gemini tokens)", state="complete", expanded=False)
         result["purchased_on"] = result.pop("date")
-        start_draft(**result, file=data, mime=mime, filename=filename)
+        start_draft(**result, files=ready)
         st.session_state.pop(PHOTO_OPEN, None)
         st.rerun()
     if not draft and c2.button("✍️ Enter manually", width="stretch"):
@@ -92,9 +93,10 @@ if draft is None or st.session_state.get(PHOTO_OPEN):
 st.subheader("Check and fix, then save")
 if photo.has_photo():
     st.button("📷 Change the crop or read again", on_click=open_photo_step)
-if draft["file"]:
+if draft["files"]:
     with st.expander("🧾 What Gemini read"):
-        show_receipt_file(draft["file"], draft["mime"], draft["filename"])
+        for data, mime, name in draft["files"]:
+            show_receipt_file(data, mime, name)
 if draft["date_guessed"]:
     st.warning("No date found on the receipt, so today's date is filled in. Please check it.")
 if draft["purchased_on"] > today():

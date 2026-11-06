@@ -21,8 +21,8 @@ def with_draft(user, **fields):
     at = make_app(user=user)
     at.session_state["draft_no"] = 1
     at.session_state["draft"] = {
-        "purchased_on": TODAY, "date_guessed": False, "store": "REWE", "total": 5.0, "file": None, "mime": None,
-        "filename": None, "items": [{"name": "MILCH", "category": "Dairy", "price": 5.0}], **fields,
+        "purchased_on": TODAY, "date_guessed": False, "store": "REWE", "total": 5.0, "files": [], "suggested": {},
+        "remembered": 0, "items": [{"name": "MILCH", "category": "Dairy & Eggs", "price": 5.0}], **fields,
     }
     return at
 
@@ -36,7 +36,7 @@ def test_manual_entry_cannot_save_without_items(store):
 
 def test_review_warns_then_saves_tagged_with_name(store):
     at = with_draft(
-        "Bibi", date_guessed=True, total=5.0, file=png(), mime="image/png", filename="r.png",
+        "Bibi", date_guessed=True, total=5.0, files=[(png(), "image/png", "r.png")],
         items=[{"name": "MILCH", "category": "Dairy", "price": 1.99}, {"name": "AEPFEL", "category": "Produce", "price": 2.5}],
     )
     no_exc(at.run())

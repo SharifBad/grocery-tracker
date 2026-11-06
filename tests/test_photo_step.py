@@ -15,8 +15,9 @@ def gemini(monkeypatch):
     """Fake extract_receipt; returns the list of (data, mime) it was called with."""
     calls = []
 
-    def fake(data, mime, on_progress=None):
-        calls.append((data, mime))
+    def fake(data, mime=None, on_progress=None):
+        parts = data if isinstance(data, list) else [(data, mime)]
+        calls.append(parts[0] if len(parts) == 1 else parts)
         return {"date": datetime.date(2026, 11, 3), "date_guessed": False, "store": "REWE", "total": 9.99,
                 "items": [{"name": f"Item read #{len(calls)}", "category": "Dairy", "price": 9.99}], "tokens": 1416}
 
@@ -38,18 +39,18 @@ def test_full_photo_flow(store, gemini, photo):
     at = no_exc(make_app(user="Bibi").run())
     assert button(at, "Read receipt").disabled
 
-    at.file_uploader[0].set_value(("receipt.jpg", photo, "image/jpeg")).run()
+    at.file_uploader[0].set_value([("receipt.jpg", photo, "image/jpeg")]).run()
     no_exc(at)
     assert [s.label for s in at.slider] == ["Tilt"], "no resolution slider"
     assert "What Gemini will see: 700 ×" in preview_label(at)
 
-    fid = at.session_state["photo"]["file_id"]
+    fid = at.session_state["photo"]["parts"][0]["file_id"]
     at.button(key=f"right_{fid}").click().run()
     w, h = (int(x) for x in preview_label(at).split(": ")[1].split(" px")[0].split(" × "))
     assert w > h, "portrait receipt is landscape after turning right"
     at.button(key=f"left_{fid}").click().run()
     at.slider[0].set_value(3.5).run()
-    assert at.session_state["photo"]["view"] == (0, 3.5)
+    assert at.session_state["photo"]["parts"][0]["view"] == (0, 3.5)
     at.slider[0].set_value(0.0).run()
 
     button(at, "Read receipt").click().run()
@@ -77,12 +78,12 @@ def test_full_photo_flow(store, gemini, photo):
     button(at, "Save receipt").click().run()
     no_exc(at)
     assert len(store) == 1 and "draft" not in at.session_state and "photo" not in at.session_state
-    assert at.file_uploader[0].value is None and not at.slider
+    assert not at.file_uploader[0].value and not at.slider
 
 
 def test_photo_and_adjustments_survive_a_visit_to_another_page(store, gemini, photo):
     at = no_exc(make_app(user="Bibi").run())
-    at.file_uploader[0].set_value(("receipt.jpg", photo, "image/jpeg")).run()
+    at.file_uploader[0].set_value([("receipt.jpg", photo, "image/jpeg")]).run()
     at.slider[0].set_value(2.5).run()
     at.switch_page("views/dashboard.py").run()
     at.switch_page("views/upload.py").run()
@@ -95,16 +96,16 @@ def test_photo_and_adjustments_survive_a_visit_to_another_page(store, gemini, ph
 
 def test_removing_the_file_forgets_the_photo(store, gemini, photo):
     at = no_exc(make_app(user="Bibi").run())
-    at.file_uploader[0].set_value(("receipt.jpg", photo, "image/jpeg")).run()
+    at.file_uploader[0].set_value([("receipt.jpg", photo, "image/jpeg")]).run()
     assert "photo" in at.session_state
-    at.file_uploader[0].set_value(None).run()
+    at.file_uploader[0].set_value([]).run()
     no_exc(at)
     assert "photo" not in at.session_state and not at.slider and button(at, "Read receipt").disabled
 
 
 def test_pdf_is_sent_as_is(store, gemini):
     at = no_exc(make_app(user="Bibi").run())
-    at.file_uploader[0].set_value(("e-receipt.pdf", b"%PDF-1.4 fake", "application/pdf")).run()
+    at.file_uploader[0].set_value([("e-receipt.pdf", b"%PDF-1.4 fake", "application/pdf")]).run()
     no_exc(at)
     assert not at.slider
     button(at, "Read receipt").click().run()
@@ -113,7 +114,32 @@ def test_pdf_is_sent_as_is(store, gemini):
 
 def test_broken_image_is_explained(store, gemini):
     at = no_exc(make_app(user="Bibi").run())
-    at.file_uploader[0].set_value(("broken.jpg", b"not an image", "image/jpeg")).run()
+    at.file_uploader[0].set_value([("broken.jpg", b"not an image", "image/jpeg")]).run()
     no_exc(at)
-    assert any("Couldn't open that image" in e.value for e in at.error)
+    assert any("broken.jpg: Couldn't open that image" in w.value for w in at.warning)
     assert button(at, "Read receipt").disabled
+
+
+def test_long_receipt_in_two_photos_is_read_in_one_call(store, gemini, photo):
+    receipt, _ = render_receipt(seed=3)
+    second = simulate_photo(receipt, seed=3)
+    at = no_exc(make_app(user="Bibi").run())
+    at.file_uploader[0].set_value([("top.jpg", photo, "image/jpeg"), ("bottom.jpg", second, "image/jpeg")]).run()
+    no_exc(at)
+    parts = at.session_state["photo"]["parts"]
+    assert len(parts) == 2 and [s.label for s in at.slider] == ["Tilt"]
+    switch = at.get("button_group")[0]
+    assert "Part 1" in str(switch.proto) and "Part 2" in str(switch.proto)
+    button(at, "Read receipt").click().run()
+    no_exc(at)
+    sent = gemini[-1]
+    assert isinstance(sent, list) and len(sent) == 2 and all(m == "image/jpeg" for _, m in sent)
+    assert len(at.session_state["draft"]["files"]) == 2
+
+
+def test_too_many_files_uses_the_first_three(store, gemini, photo):
+    at = no_exc(make_app(user="Bibi").run())
+    at.file_uploader[0].set_value([(f"p{i}.jpg", photo, "image/jpeg") for i in range(4)]).run()
+    no_exc(at)
+    assert len(at.session_state["photo"]["parts"]) == 3
+    assert any("Only the first 3 files" in w.value for w in at.warning)

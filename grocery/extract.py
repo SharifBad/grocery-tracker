@@ -98,7 +98,12 @@ def _retryable(err):
     return isinstance(err, (httpx.TransportError, TimeoutError, ConnectionError))  # network hiccups
 
 
-def _read(data, mime, media_resolution, on_progress):
+# Added only when a long receipt comes in several photos.
+MULTI_PART_NOTE = "The images are parts of ONE long receipt, top to bottom; they may overlap. List each item once.\n"
+MAX_PARTS = 3
+
+
+def _read(parts, media_resolution, on_progress):
     """One extraction call (with busy-retries). Returns (parsed receipt, billed tokens)."""
     config = types.GenerateContentConfig(
         response_mime_type="application/json",
@@ -110,7 +115,8 @@ def _read(data, mime, media_resolution, on_progress):
         try:
             response = _client().models.generate_content(
                 model=GEMINI_MODEL,
-                contents=[types.Part.from_bytes(data=data, mime_type=mime), PROMPT],
+                contents=[types.Part.from_bytes(data=d, mime_type=m) for d, m in parts]
+                + [PROMPT + (MULTI_PART_NOTE if len(parts) > 1 else "")],
                 config=config,
             )
             break
@@ -136,18 +142,22 @@ def _read(data, mime, media_resolution, on_progress):
     return parsed, tokens
 
 
-def extract_receipt(data, mime, on_progress=None):
+def extract_receipt(data, mime=None, on_progress=None):
     """Return {date, date_guessed, store, total, items: [{name, category, price}], tokens}.
+
+    `data` is one file's bytes (with `mime`), or a list of (bytes, mime) for a long receipt
+    photographed in up to MAX_PARTS parts, read together in one call.
 
     on_progress(message) is called with status updates (busy retries, double-checking).
     Raises ExtractionError with a user-facing message.
     """
-    parsed, tokens = _read(data, mime, GEMINI_MEDIA_RESOLUTION, on_progress)
+    parts = list(data)[:MAX_PARTS] if isinstance(data, (list, tuple)) else [(data, mime)]
+    parsed, tokens = _read(parts, GEMINI_MEDIA_RESOLUTION, on_progress)
     if not parsed.adds_up():
         if on_progress:
             on_progress("🔍 The items don't add up to the total, so reading it again in more detail…")
         try:
-            second, more_tokens = _read(data, mime, GEMINI_MEDIA_RESOLUTION_RECHECK, on_progress)
+            second, more_tokens = _read(parts, GEMINI_MEDIA_RESOLUTION_RECHECK, on_progress)
         except ExtractionError:  # the first read is still usable; the review step flags the gap
             log.warning("Detailed re-read failed; keeping the first read", exc_info=True)
         else:

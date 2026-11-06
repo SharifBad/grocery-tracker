@@ -38,8 +38,9 @@ def test_sign_out_forgets_everything(store):
     at.session_state["draft_no"] = 1
     at.session_state["draft"] = {"purchased_on": datetime.date(2026, 11, 3), "date_guessed": False, "store": "REWE",
                                  "total": 1.0, "items": [{"name": "X", "category": "Other", "price": 1.0}],
-                                 "file": None, "mime": None, "filename": None}
-    at.session_state["photo"] = {"kind": "pdf", "file_id": "f", "name": "r.pdf", "data": b"%PDF"}
+                                 "files": [], "suggested": {}, "remembered": 0}
+    at.session_state["photo"] = {"parts": [{"kind": "pdf", "file_id": "f", "name": "r.pdf", "data": b"%PDF"}],
+                                 "in_uploader": False, "mount": 0}
     no_exc(at.run())
     next(b for b in at.button if b.label == "Sign out").click().run()
     assert on_sign_in_page(at)
