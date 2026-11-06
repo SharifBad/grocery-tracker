@@ -1,4 +1,4 @@
-"""Monthly spending overview: budget, comparison to the previous month, breakdowns, 12-month trend."""
+"""Monthly spending overview: budget, comparison to the previous month, breakdowns, Pfand, 12-month trend."""
 import logging
 
 import streamlit as st
@@ -7,7 +7,7 @@ from grocery import db
 from grocery.auth import current_user
 from grocery.config import CATEGORIES
 from grocery.ui import avatar_data_uri, database_errors, euro, flash, month_picker
-from grocery.utils import month_label, pretty_month, shift_month, week_label
+from grocery.utils import is_pfand, month_label, pretty_month, shift_month, week_label
 
 log = logging.getLogger(__name__)
 TOTAL = "TOTAL"  # budgets key for the overall monthly budget
@@ -51,6 +51,21 @@ def budget_section(cur):
                 flash("Budgets saved.")
                 st.rerun()
 
+
+def pfand_section(df, cur):
+    """Bottle deposits paid vs returned (Leergut slips are negative)."""
+    pfand_all = df[df["name"].map(is_pfand)]
+    if pfand_all.empty:
+        return
+    pfand_now = cur[cur["name"].map(is_pfand)]
+    paid = pfand_now.loc[pfand_now["price"] > 0, "price"].sum()
+    returned = -pfand_now.loc[pfand_now["price"] < 0, "price"].sum()
+    outstanding = pfand_all["price"].sum()
+    st.subheader("♻️ Pfand")
+    p1, p2, p3 = st.columns(3)
+    p1.metric("Paid this month", euro(paid))
+    p2.metric("Returned this month", euro(returned))
+    p3.metric("Still out (all time)", euro(outstanding), help="Deposits paid minus returned, since the first receipt.")
 
 st.title("📊 Dashboard")
 flash()
@@ -122,6 +137,8 @@ else:
             "price": st.column_config.NumberColumn("Spent (€)", format="€%.2f"),
         },
     )
+
+pfand_section(df, cur)
 
 st.subheader("📈 Last 12 months")
 window = [shift_month(month, -n) for n in range(11, -1, -1)]

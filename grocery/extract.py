@@ -45,7 +45,7 @@ Read this grocery receipt and extract it.
   Bakery: bread, toast, crispbread, cakes. Pantry: pasta, rice, flour, muesli, cans, oil, spices,
   sauces, coffee, tea. Snacks & Sweets: chips, nuts, chocolate, biscuits, ice cream. Frozen: not ice
   cream. Cleaning & Household: detergent, toilet paper, bin bags. Skin & Body Care: cosmetics,
-  shampoo, toothpaste. Health: medicine, plasters. Other: Pfand, bags.
+  shampoo, toothpaste. Health: medicine, plasters. Other: Pfand (Leergut returns negative), bags.
 Skip subtotal, tax, payment and change lines.
 JSON keys: d=date, s=store, t=total, i=items; per item n=name, c=category, p=price.
 """

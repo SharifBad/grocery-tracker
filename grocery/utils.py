@@ -144,3 +144,11 @@ def looks_like_duplicate(existing, store, total):
 def item_key(name):
     """How an item is recognised again: its name as printed, ignoring case, umlauts and punctuation."""
     return _plain(name)
+
+
+_PFAND = re.compile(r"pfand|leergut|einweg|mehrweg|deposit", re.IGNORECASE)
+
+
+def is_pfand(name):
+    """Bottle-deposit lines: paid (positive) or returned via a Leergut slip (negative)."""
+    return bool(_PFAND.search(str(name or "")))
