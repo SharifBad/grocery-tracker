@@ -13,7 +13,7 @@
 - `grocery/`: the package the pages import.
   - `config.py`: constants (`CATEGORIES`, `GEMINI_MODEL`, retry settings). Does not import Streamlit.
   - `utils.py`: pure helpers (`to_money`, `normalize_category`, month and week labels). Does not import Streamlit, so `scripts/` can use it.
-  - `auth.py`: name-only sign-in. The typed name must match one in `st.secrets["FAMILY"]` (case-insensitive). The canonical name is stored in `st.session_state["user"]`; `current_user()` returns it.
+  - `auth.py`: sign-in. The typed name must match one in `st.secrets["FAMILY"]` (case-insensitive), and the shared `FAMILY_CODE` must match (case and surrounding spaces ignored). The canonical name goes in `st.session_state["user"]` and a fingerprint of the code in `"code_fingerprint"`; `current_user()` returns the name.
   - `imaging.py`: pure PIL/numpy. EXIF fix, rotate and tilt, auto-detected crop box (Otsu threshold), and `prepare_for_gemini` (crop, grayscale, shrink so the short side is 700 px, JPEG q80).
   - `photo_editor.py`: the photo UI. ↺/↻ buttons, a tilt slider (±15°), a crop box (`streamlit-cropper`), and a preview of what Gemini will see. State lives in `st.session_state["photo"]`.
   - `extract.py`: Gemini call with a pydantic `response_schema` (categories are always a valid enum), low-token settings, the add-up check with one re-read, and capped busy-retries.
@@ -34,8 +34,8 @@
 ## Security model
 
 - Streamlit connects with the Supabase **service_role** key, which never leaves the server. RLS is on with no policies, and anon/authenticated have their privileges revoked, so the public anon key can do nothing.
-- Access control is entirely `grocery/auth.py`, and it is deliberately weak: there's **no password**, just a name that must be in `FAMILY`. Anyone with the URL who knows a family name can get in. The owner chose this for convenience. Don't add OAuth or passwords unless asked; a shared family code would be the smallest step up.
-- Sign-in lasts for the browser session only, so a page reload asks for the name again.
+- Access control is entirely `grocery/auth.py`: a family member's name plus the shared `FAMILY_CODE`. Changing `FAMILY_CODE` signs everyone out on their next click, because the stored fingerprint no longer matches. A wrong attempt waits 1 s. There are no per-person passwords and no OAuth: the owner chose this for convenience, so don't add them unless asked.
+- Sign-in lasts for the browser session only, so a page reload asks again.
 - Any new page must be routed through `app.py` so it stays behind the sign-in gate.
 
 ## Running locally
@@ -50,11 +50,20 @@ Run `supabase/schema.sql` once in the Supabase SQL editor.
 
 ## Testing
 
-There is no test suite in the repo yet. What has worked so far:
+```bash
+pip install -r requirements.txt -r requirements-dev.txt
+pytest                              # Python: unit + AppTest page flows (no network, no secrets)
+cd tests/sql && npm ci && npm test  # SQL: supabase/schema.sql in PGlite (real Postgres in WASM)
+```
 
-- **App flows:** `streamlit.testing.v1.AppTest` on `app.py`, with `grocery.db.*` patched to an in-memory fake. Set `at.secrets["FAMILY"]`, and set `at.session_state["user"]` to skip the sign-in form. To jump straight to the review step, put a `draft` into `at.session_state`. Change pages with `at.switch_page("views/...")`. Photos can be uploaded with `at.file_uploader[0].set_value((name, bytes, mime))`. The cropper is a custom component, so under AppTest it returns its default box.
-- **Crop UI in a real browser:** Playwright with Chromium at phone size (390×844), against a copy of the app with fake secrets. AppTest can't exercise the custom component.
-- **SQL:** `supabase/schema.sql` runs in PGlite (`@electric-sql/pglite`). Create the roles `anon`, `authenticated` and `service_role` first.
+GitHub Actions (`.github/workflows/tests.yml`) runs both on every push.
+
+- `tests/helpers.make_app(user=...)` builds an `AppTest` with test secrets, and `user` skips sign-in. It always sets a dummy key: with no secrets at all, Streamlit falls back to reading the real `.streamlit/secrets.toml` from the working directory.
+- The `store` fixture (`tests/conftest.py`) replaces `grocery.db` with an in-memory fake. `tests/test_db.py` runs the real supabase client against a local fake HTTP server instead.
+- `tests/receipts.py` renders synthetic thermal receipts and "phone photos". It falls back to Pillow's built-in font where DejaVu or Menlo is missing.
+- AppTest tips: change pages with `at.switch_page("views/...")`; upload with `at.file_uploader[0].set_value((name, bytes, mime))`; to jump to the review step, put a `draft` in `at.session_state`. The cropper is a custom component, so under AppTest it returns its default box.
+- `tests/sql/schema_v1.sql` is the first released schema. The SQL test upgrades from it to check that re-running `schema.sql` on an existing database works.
+- The crop box and the backup download were checked by hand-run Playwright scripts (Chromium at phone size, against a copy of the app with fake secrets and a fake Supabase). They are not part of CI.
 - Never test against the production Supabase project; it holds the family's live data.
 
 ## Gemini token use
@@ -68,6 +77,11 @@ Measured 2026-11-06 with gemini-3.8-flash on simulated phone photos of 25- and 4
 - **Result:** ~1,420 billed tokens and ~8 s for a 40-item receipt, against ~11,400 tokens and ~68 s before.
 - **Pixel size doesn't change tokens.** Gemini billed the same at every size from 250 px to full resolution. The fixed shrink to `OCR_SHORT_SIDE = 700` px is only for upload speed and memory (everything was read correctly down to 250 px). The phone still uploads the full photo to the Streamlit server.
 - `extract_receipt` returns `tokens`, and the upload page shows it once a read finishes.
+
+## Duplicates and backups
+
+- `utils.looks_like_duplicate`: a saved receipt from the same date counts as a duplicate if it has the same total, whatever the store is called (Gemini spells stores inconsistently). Without a total on either side, it falls back to a loose store-name match (`same_store`: same first significant word, or ≥0.8 similarity). The upload page only warns; it never blocks saving.
+- The sidebar's "Download backup (CSV)" calls `db.export_csv` only when clicked (Streamlit runs the callable on a background thread). It writes one row per item with the receipt's fields repeated, in UTF-8 with a BOM so Excel shows umlauts correctly.
 
 ## Conventions and gotchas
 
