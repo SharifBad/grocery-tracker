@@ -21,10 +21,14 @@ def test_to_money(raw, expected):
 
 
 def test_normalize_category():
-    assert normalize_category("dairy") == "Dairy"
-    assert normalize_category(" Produce ") == "Produce"
-    assert normalize_category("Snacks") == "Other"
-    assert normalize_category(None) == "Other"
+    assert normalize_category("dairy & eggs") == "Dairy & Eggs"
+    assert normalize_category(" Skin & Body Care ") == "Skin & Body Care"
+    assert normalize_category("skin care") == "Skin & Body Care" and normalize_category("Veggie") == "Vegetables"
+    assert normalize_category("Snacks") == "Snacks & Sweets" and normalize_category("clothes") == "Clothes & Shoes"
+    # the app's earlier category names
+    assert [normalize_category(c) for c in ("Produce", "Dairy", "Meat", "Household", "Bakery", "Pantry")] == [
+        "Vegetables", "Dairy & Eggs", "Meat & Fish", "Cleaning & Household", "Bakery", "Pantry"]
+    assert normalize_category("Garden") == "Other" and normalize_category(None) == "Other"
 
 
 def test_week_label_uses_iso_year():

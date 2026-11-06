@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 from supabase import create_client
 
-from grocery.utils import looks_like_duplicate
+from grocery.utils import looks_like_duplicate, normalize_category
 
 PAGE_SIZE = 1000  # PostgREST's default max rows per request
 ITEM_COLUMNS = ["item_id", "receipt_id", "purchased_on", "store", "uploaded_by", "name", "category", "price"]
@@ -44,6 +44,7 @@ def load_item_lines():
     df = pd.DataFrame(rows, columns=ITEM_COLUMNS)
     df["purchased_on"] = pd.to_datetime(df["purchased_on"]).dt.date
     df["price"] = pd.to_numeric(df["price"]).fillna(0.0)
+    df["category"] = df["category"].map(normalize_category)  # receipts saved with earlier category names
     return df
 
 

@@ -8,7 +8,22 @@ FAVICON = Path(__file__).resolve().parents[1] / "assets" / "favicon.png"
 # Profile photos: assets/avatars/<name in lower case>.png (e.g. shiqing.png). Missing = 👤.
 AVATARS = Path(__file__).resolve().parents[1] / "assets" / "avatars"
 
-CATEGORIES = ["Produce", "Dairy", "Meat", "Bakery", "Pantry", "Household", "Other"]
+CATEGORIES = [
+    "Fruit", "Vegetables", "Meat & Fish", "Dairy & Eggs", "Bakery", "Pantry", "Snacks & Sweets", "Drinks",
+    "Frozen", "Cleaning & Household", "Skin & Body Care", "Health", "Pet", "Clothes & Shoes", "Other",
+]
+# Other spellings (and the app's earlier category names) mapped onto CATEGORIES by
+# utils.normalize_category. "Produce" can't be split, so it goes to Vegetables.
+CATEGORY_ALIASES = {
+    "produce": "Vegetables", "dairy": "Dairy & Eggs", "meat": "Meat & Fish", "household": "Cleaning & Household",
+    "fruits": "Fruit", "veggie": "Vegetables", "veggies": "Vegetables", "vegetable": "Vegetables",
+    "fish": "Meat & Fish", "eggs": "Dairy & Eggs", "snacks": "Snacks & Sweets", "sweets": "Snacks & Sweets",
+    "drink": "Drinks", "beverages": "Drinks", "cleaning": "Cleaning & Household",
+    "skin care": "Skin & Body Care", "skincare": "Skin & Body Care", "personal care": "Skin & Body Care",
+    "toiletries": "Skin & Body Care", "hygiene": "Skin & Body Care", "cosmetics": "Skin & Body Care",
+    "medicine": "Health", "pharmacy": "Health", "pets": "Pet", "clothes": "Clothes & Shoes",
+    "shoes": "Clothes & Shoes", "clothing": "Clothes & Shoes",
+}
 
 # Common German chains. Store names from receipts or typed in the form are mapped onto these
 # names (see utils.canonical_store), so spending per store adds up correctly. Anything that

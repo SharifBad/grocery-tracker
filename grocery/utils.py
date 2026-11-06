@@ -4,9 +4,9 @@ import difflib
 import re
 from zoneinfo import ZoneInfo
 
-from grocery.config import CATEGORIES, STORES, TIMEZONE
+from grocery.config import CATEGORIES, CATEGORY_ALIASES, STORES, TIMEZONE
 
-_CATEGORY_LOOKUP = {c.lower(): c for c in CATEGORIES}
+_CATEGORY_LOOKUP = {**CATEGORY_ALIASES, **{c.lower(): c for c in CATEGORIES}}
 
 
 def today():
@@ -42,7 +42,7 @@ def to_money(value):
 
 
 def normalize_category(value):
-    """Map any category string onto CATEGORIES (case-insensitive), defaulting to 'Other'."""
+    """Map a category (any case, an alias, or an earlier name like 'Dairy') onto CATEGORIES; else 'Other'."""
     return _CATEGORY_LOOKUP.get(str(value or "").strip().lower(), "Other")
 
 

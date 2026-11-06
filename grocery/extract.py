@@ -19,7 +19,7 @@ import httpx
 import streamlit as st
 from google import genai
 from google.genai import errors, types
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from grocery.config import (
     CATEGORIES,
@@ -50,11 +50,16 @@ Read this grocery receipt and extract it.
     If a discount can't be tied to an item, add it as its own item named "Discount" with a
     negative price and category Other.
   - category, one of {", ".join(CATEGORIES)}:
-    Produce = fruit, vegetables, fresh herbs; Dairy = milk, cheese, yogurt, butter, eggs;
-    Meat = meat, poultry, fish, seafood; Bakery = bread, rolls, pastries, cakes;
-    Pantry = dry and canned goods, pasta, rice, spices, oils, snacks, sweets, drinks, frozen food;
-    Household = cleaning products, toiletries, paper goods, other non-food;
-    Other = bottle deposits, bags, anything else.
+    Fruit = fresh fruit; Vegetables = vegetables, salad, potatoes, fresh herbs;
+    Meat & Fish = meat, poultry, sausage, cold cuts, fish, seafood; Dairy & Eggs = milk, cheese, yogurt, butter, cream, eggs;
+    Bakery = bread, rolls, toast, crispbread, cakes, pastries (fresh or packaged);
+    Pantry = pasta, rice, flour, cereal, muesli, canned and jarred food, oil, spices, sauces, sugar, coffee, tea;
+    Snacks & Sweets = chips, nuts, chocolate, candy, packaged biscuits, ice cream; Drinks = water, juice, soda, beer, wine;
+    Frozen = frozen meals, pizza, vegetables (not ice cream);
+    Cleaning & Household = detergent, dish soap, cleaning products, toilet paper, kitchen roll, bin bags, batteries;
+    Skin & Body Care = skin care, cosmetics, shampoo, soap, toothpaste, deodorant, razors;
+    Health = medicine, vitamins, plasters; Pet = pet food, cat litter, pet supplies;
+    Clothes & Shoes = clothing, shoes, socks; Other = bottle deposits (Pfand), bags, gift cards, anything else.
 Skip subtotal, tax, payment, card and change lines.
 JSON keys: d=date, s=store, t=total, i=items; per item n=name, c=category, p=price.
 """
@@ -66,6 +71,12 @@ class ExtractedItem(BaseModel):
     name: str = Field(alias="n")
     category: Literal[tuple(CATEGORIES)] = Field(alias="c")  # type: ignore[valid-type]
     price: float = Field(alias="p")
+
+    @field_validator("category", mode="before")
+    @classmethod
+    def _known_category(cls, value):
+        # Gemini sees the exact list; if it still answers something else, don't fail the whole read.
+        return normalize_category(value)
 
 
 class ExtractedReceipt(BaseModel):

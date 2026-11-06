@@ -19,10 +19,10 @@ class Response:
         self.parsed, self.text, self.usage_metadata = None, text, Usage(tokens)
 
 
-GOOD = '{"d":"2026-11-03","s":"REWE","t":3.00,"i":[{"n":"MILCH","c":"Dairy","p":1.00},{"n":"BROT","c":"Bakery","p":2.00}]}'
-OFF_BY_1 = '{"d":"2026-11-03","s":"REWE","t":3.00,"i":[{"n":"MILCH","c":"Dairy","p":1.00},{"n":"BROT","c":"Bakery","p":1.00}]}'
-OFF_BY_2 = '{"d":"2026-11-03","s":"REWE","t":3.00,"i":[{"n":"MILCH","c":"Dairy","p":1.00}]}'
-NO_TOTAL = '{"d":null,"s":"REWE","t":null,"i":[{"n":"MILCH","c":"Dairy","p":1.00}]}'
+GOOD = '{"d":"2026-11-03","s":"REWE","t":3.00,"i":[{"n":"MILCH","c":"Dairy & Eggs","p":1.00},{"n":"BROT","c":"Bakery","p":2.00}]}'
+OFF_BY_1 = '{"d":"2026-11-03","s":"REWE","t":3.00,"i":[{"n":"MILCH","c":"Dairy & Eggs","p":1.00},{"n":"BROT","c":"Bakery","p":1.00}]}'
+OFF_BY_2 = '{"d":"2026-11-03","s":"REWE","t":3.00,"i":[{"n":"MILCH","c":"Dairy & Eggs","p":1.00}]}'
+NO_TOTAL = '{"d":null,"s":"REWE","t":null,"i":[{"n":"MILCH","c":"Dairy & Eggs","p":1.00}]}'
 
 
 def run(*responses, sleep=None):
@@ -47,7 +47,7 @@ def test_cheap_settings_and_single_call_when_items_add_up():
     (config,) = configs
     assert config.media_resolution == types.MediaResolution.MEDIA_RESOLUTION_LOW
     assert config.thinking_config.thinking_level == types.ThinkingLevel.LOW
-    assert out["items"] == [{"name": "MILCH", "category": "Dairy", "price": 1.0}, {"name": "BROT", "category": "Bakery", "price": 2.0}]
+    assert out["items"] == [{"name": "MILCH", "category": "Dairy & Eggs", "price": 1.0}, {"name": "BROT", "category": "Bakery", "price": 2.0}]
     assert out["total"] == 3.0 and out["tokens"] == 1000 and not notes
 
 
@@ -78,7 +78,7 @@ def test_store_is_mapped_to_the_chain_and_the_prompt_lists_the_chains():
 
 def test_full_field_names_still_parse():
     out, _, _ = run('{"date":"2026-11-03","store":"X","total":1.0,"items":[{"name":"A","category":"Meat","price":1.0}]}')
-    assert out["items"][0]["category"] == "Meat"
+    assert out["items"][0]["category"] == "Meat & Fish", "earlier name mapped onto the new list"
 
 
 def api_error(code):
@@ -111,3 +111,8 @@ def test_failed_reread_keeps_the_first_read():
 def test_unparseable_answer_is_a_friendly_error():
     with pytest.raises(extract.ExtractionError, match="couldn't be understood"):
         run("not json")
+
+
+def test_unknown_category_falls_back_to_other_instead_of_failing():
+    out, _, _ = run(GOOD.replace('"c":"Bakery"', '"c":"Garden"'))
+    assert [i["category"] for i in out["items"]] == ["Dairy & Eggs", "Other"]

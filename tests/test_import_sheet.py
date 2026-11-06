@@ -25,7 +25,7 @@ def test_parses_realigns_and_groups_old_sheet_rows():
     receipts = import_sheet.group_receipts(import_sheet.parse_rows(values))
     assert len(receipts) == 2
     (lidl, lidl_items), (aldi, aldi_items) = receipts
-    assert lidl["total"] == 5.49 and [i["category"] for i in lidl_items] == ["Dairy", "Bakery"]
+    assert lidl["total"] == 5.49 and [i["category"] for i in lidl_items] == ["Dairy & Eggs", "Bakery"]
     assert lidl_items[0]["price"] == 1.99
     assert aldi["store"] == "Aldi" and len(aldi_items) == 2 and aldi_items[1]["category"] == "Other"
     assert import_sheet.parse_rows([HEADERS, ["2026-11-01", "REWE Markt GmbH", "Milk", "Dairy", "1", "", "", "1"]])[0]["store"] == "REWE"
