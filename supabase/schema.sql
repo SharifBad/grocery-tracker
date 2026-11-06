@@ -10,11 +10,13 @@ create table if not exists receipts (
   store        text        not null default 'Unknown Store',
   total        numeric(10,2),                 -- amount paid per the receipt; null if unknown
   uploaded_by  text        not null,          -- name of the family member who added it
-  image_path   text,                          -- object path in the 'receipts' storage bucket
   created_at   timestamptz not null default now(),
   updated_by   text,
   updated_at   timestamptz
 );
+
+-- Receipt photos are not stored. Drops the column from databases created by an older version.
+alter table receipts drop column if exists image_path;
 
 create table if not exists items (
   id         uuid primary key default gen_random_uuid(),
@@ -49,13 +51,12 @@ declare
   rid uuid;
 begin
   if p_id is null then
-    insert into receipts (purchased_on, store, total, uploaded_by, image_path)
+    insert into receipts (purchased_on, store, total, uploaded_by)
     values (
       (p_receipt->>'purchased_on')::date,
       coalesce(nullif(trim(p_receipt->>'store'), ''), 'Unknown Store'),
       (p_receipt->>'total')::numeric,
-      p_user,
-      p_receipt->>'image_path'
+      p_user
     )
     returning id into rid;
   else
@@ -89,8 +90,3 @@ $$;
 -- Only the server (service_role) may call it; anon/authenticated get it by default otherwise.
 revoke execute on function save_receipt(jsonb, jsonb, text, uuid) from public, anon, authenticated;
 grant execute on function save_receipt(jsonb, jsonb, text, uuid) to service_role;
-
--- Private bucket for receipt photos/PDFs.
-insert into storage.buckets (id, name, public)
-values ('receipts', 'receipts', false)
-on conflict (id) do nothing;

@@ -11,23 +11,23 @@
   - `history.py`: table of receipts for a month. Selecting a row opens the editor (save or delete).
   - `qr.py`: QR code for the fridge.
 - `grocery/`: the package the pages import.
-  - `config.py`: constants (`CATEGORIES`, `GEMINI_MODEL`, retry settings, bucket name). Does not import Streamlit.
+  - `config.py`: constants (`CATEGORIES`, `GEMINI_MODEL`, retry settings). Does not import Streamlit.
   - `utils.py`: pure helpers (`to_money`, `normalize_category`, month and week labels). Does not import Streamlit, so `scripts/` can use it.
   - `auth.py`: name-only sign-in. The typed name must match one in `st.secrets["FAMILY"]` (case-insensitive). The canonical name is stored in `st.session_state["user"]`; `current_user()` returns it.
   - `extract.py`: Gemini call with a pydantic `response_schema`, so categories are always a valid enum. Retries are capped.
   - `db.py`: **the only module that talks to Supabase.** Reads are cached with `st.cache_data`; every write calls `_invalidate()`.
   - `ui.py`: shared widgets (`receipt_editor`, `month_picker`, `flash`, `euro`).
-- `supabase/schema.sql`: tables, the `item_lines` view, the `save_receipt()` function and the storage bucket. It is safe to re-run.
+- `supabase/schema.sql`: tables, the `item_lines` view and the `save_receipt()` function. It is safe to re-run.
 - `scripts/import_sheet.py`: one-off migration from the old Google Sheet. It is a dry run unless you pass `--commit`.
 
 ## Data model (Supabase Postgres)
 
-- `receipts`: id, purchased_on, store, total (nullable), uploaded_by (family member's name), image_path, created_at, updated_by, updated_at.
+- `receipts`: id, purchased_on, store, total (nullable), uploaded_by (family member's name), created_at, updated_by, updated_at.
 - `items`: id, receipt_id → receipts (on delete cascade), name, category, price. Price may be negative for discounts.
 - `item_lines` view: items joined with their receipt's date, store and uploader. The dashboard reads this.
 - **All writes go through `save_receipt(p_receipt, p_items, p_user, p_id)`.** It creates the receipt, or updates it and replaces its items, in one transaction. Don't insert into the tables separately.
 - Week and month are computed in Python from `purchased_on`, not stored. Weeks use the ISO year (`week_label`).
-- Receipt files are stored in the private `receipts` storage bucket at `YYYY/MM/<uuid>.<ext>`.
+- **Receipt photos are never stored.** Gemini reads the uploaded file, and the review step previews it from memory (`st.session_state["draft"]`). Only the extracted data and the uploader's name are saved. This was the owner's choice, to save space; don't add image storage back unless asked.
 
 ## Security model
 
@@ -51,7 +51,7 @@ Run `supabase/schema.sql` once in the Supabase SQL editor.
 There is no test suite in the repo yet. What has worked so far:
 
 - **App flows:** `streamlit.testing.v1.AppTest` on `app.py`, with `grocery.db.*` patched to an in-memory fake. Set `at.secrets["FAMILY"]`, and set `at.session_state["user"]` to skip the sign-in form. AppTest can't drive `file_uploader`, so to test the review step, put a `draft` straight into `at.session_state`. Change pages with `at.switch_page("views/...")`.
-- **SQL:** `supabase/schema.sql` runs in PGlite (`@electric-sql/pglite`). Create the roles `anon`, `authenticated` and `service_role` and a stub `storage.buckets` table first.
+- **SQL:** `supabase/schema.sql` runs in PGlite (`@electric-sql/pglite`). Create the roles `anon`, `authenticated` and `service_role` first.
 - Never test against the production Supabase project; it holds the family's live data.
 
 ## Conventions and gotchas

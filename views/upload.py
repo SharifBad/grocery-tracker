@@ -85,17 +85,11 @@ if receipt["store"]:
 
 b1, b2 = st.columns([2, 1])
 if b1.button("💾 Save receipt", type="primary", disabled=not receipt["items"], width="stretch"):
-    image_path = db.upload_image(draft["file"], draft["mime"], draft["filename"]) if draft["file"] else None
-    try:
-        db.save_receipt(
-            {k: receipt[k] for k in ("purchased_on", "store", "total")} | {"image_path": image_path},
-            receipt["items"],
-            user=current_user(),
-        )
-    except Exception:
-        if image_path:
-            db.remove_image(image_path)
-        raise
+    db.save_receipt(
+        {k: receipt[k] for k in ("purchased_on", "store", "total")},
+        receipt["items"],
+        user=current_user(),
+    )
     del st.session_state[DRAFT]
     flash(f"Saved {len(receipt['items'])} items from {receipt['store'] or 'the receipt'} 🎉")
     st.rerun()

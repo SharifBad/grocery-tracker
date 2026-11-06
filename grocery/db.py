@@ -1,12 +1,7 @@
-"""All Supabase access: receipts/items tables, the item_lines view, and receipt image storage."""
-import datetime
-import uuid
-
+"""All Supabase access: receipts/items tables and the item_lines view."""
 import pandas as pd
 import streamlit as st
 from supabase import create_client
-
-from grocery.config import RECEIPT_BUCKET
 
 PAGE_SIZE = 1000  # PostgREST's default max rows per request
 ITEM_COLUMNS = ["item_id", "receipt_id", "purchased_on", "store", "uploaded_by", "name", "category", "price"]
@@ -74,7 +69,7 @@ def find_duplicates(purchased_on, store, total):
 def save_receipt(receipt, items, user, receipt_id=None):
     """Create (receipt_id None) or update a receipt and replace its items atomically. Returns its id.
 
-    receipt: {purchased_on: date, store: str, total: float | None, image_path: str | None}
+    receipt: {purchased_on: date, store: str, total: float | None}
     items:   [{name, category, price}]
     """
     payload = {
@@ -88,28 +83,6 @@ def save_receipt(receipt, items, user, receipt_id=None):
     return rid
 
 
-def delete_receipt(receipt_id, image_path=None):
+def delete_receipt(receipt_id):
     client().table("receipts").delete().eq("id", receipt_id).execute()  # items cascade
-    if image_path:
-        remove_image(image_path)
     _invalidate()
-
-
-# --- Receipt images ---
-def upload_image(data, mime, filename):
-    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "bin"
-    path = f"{datetime.date.today():%Y/%m}/{uuid.uuid4()}.{ext}"
-    client().storage.from_(RECEIPT_BUCKET).upload(path, data, {"content-type": mime})
-    return path
-
-
-def remove_image(path):
-    try:
-        client().storage.from_(RECEIPT_BUCKET).remove([path])
-    except Exception:
-        pass  # an orphaned image is harmless; don't fail the user's action over it
-
-
-@st.cache_data(ttl=3600, show_spinner=False, max_entries=50)
-def get_image(path):
-    return client().storage.from_(RECEIPT_BUCKET).download(path)
