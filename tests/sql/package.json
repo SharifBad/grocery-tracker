@@ -1,0 +1,7 @@
+{
+  "name": "grocery-tracker-sql-tests",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node schema.test.mjs" },
+  "devDependencies": { "@electric-sql/pglite": "0.2.17" }
+}

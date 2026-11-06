@@ -6,3 +6,7 @@ __pycache__/
 .venv/
 venv/
 .DS_Store
+
+# Test tooling
+.pytest_cache/
+tests/sql/node_modules/
