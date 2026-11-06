@@ -9,6 +9,7 @@
   - `upload.py`: two modes that are never on screen together. The **photo step** (upload, `photo_editor`, "Read with Gemini", or manual entry) and, once a draft exists, the **review step** (editor, Save). "📷 Change the crop or read again" sets `photo_open` to go back. The draft lives in `st.session_state["draft"]`. Don't put the cropper in a collapsed expander: it sizes itself to 0 px.
   - `dashboard.py`: month picker, metrics compared with the previous month, breakdowns by category, week and family member, and a 12-month trend.
   - `history.py`: table of receipts for a month. Selecting a row opens the editor (save or delete). The selection is remembered **by receipt id** (`history_selected`), the table key includes a hash of the listed ids, and Save/Delete buttons are keyed by id. Other family members add and delete receipts concurrently, and a row index can silently point at a different receipt.
+  - `prices.py`: price tracking. Recent changes of 5% or more per item and store, and a per-item lookup with history and the cheapest store lately.
   - `qr.py`: QR code for the fridge.
 - `grocery/`: the package the pages import.
   - `config.py`: constants (`CATEGORIES`, `GEMINI_MODEL`, retry settings). Does not import Streamlit.
@@ -90,6 +91,16 @@ Measured 2026-11-06 with gemini-3.8-flash on simulated phone photos of 25- and 4
 - `config.STORES` lists common German chains (REWE, Lidl, Aldi, Edeka, Kaufland, Netto, Penny, Rossmann, dm, Müller, …). Each entry has phrases that identify the chain anywhere in a name, plus words that only count as the *whole* name; "Müller" and "dm" are exact-only, so "Bäckerei Müller" stays a bakery.
 - `utils.canonical_store` maps any name onto a chain, ignoring case, umlauts, punctuation and GmbH/KG. It also catches one misread letter in words of 6+ letters ("Kaufiand"). Anything else is kept as printed, tidied. It's applied to Gemini's answer, the review form, `same_store` and the sheet import. The prompt does *not* list the chains: mapping afterwards is enough and saves ~90 tokens.
 - The review form's store field is a dropdown (`accept_new_options`): chains first, then stores used before, and typing a new one is allowed. The dashboard has a "By store" table.
+
+## Family features
+
+- **Remembered categories** (table `category_memory`, keyed by `utils.item_key(name)`): after a Gemini read, the upload page applies categories the family set before. On save, a category is remembered only when the user set it themselves: when it differs from what was suggested, or the item was added by hand. History edits are remembered too. Failures never block saving.
+- **Budgets** (table `budgets`; `TOTAL` is the overall budget): dashboard progress bars, a warning at 80%, an error when over, and a 🎯 popover to set them. If the table is missing, the section is simply hidden.
+- **Pfand**: lines matching `utils.is_pfand` (pfand, leergut, einweg, mehrweg). Positive means paid; negative means returned via a Leergut slip, and the prompt asks for those to be negative. The dashboard shows paid and returned this month, plus how much is still out overall.
+- **Search** (History): matches item, store or category across all months. Tapping a result runs `open_from_search` as an `on_select` callback, which sets the month and the selected receipt before the rerun.
+- **Stay signed in** (`auth.py`): a 30-day cookie `gt_remember` holding the name, the expiry and an HMAC keyed with `FAMILY_CODE`. It's set via `st.html(..., unsafe_allow_javascript=True)` and read with `st.context.cookies`. Changing the code or removing the name revokes it, and sign-out deletes it (`_signed_out` stops an immediate re-login from the stale cookie in the same session). Tested locally in Chromium; Streamlit Cloud's wrapper hasn't been verified yet.
+- **Long receipts**: up to `extract.MAX_PARTS` (3) photos per receipt, each with its own turn, tilt and crop, switched with "Part 1/2/3". All parts are sent in one Gemini call, plus a note to list overlapping items once; the note is only added for 2+ parts. A PDF is read on its own.
+- **After deploying these:** re-run `supabase/schema.sql` in Supabase to create `category_memory` and `budgets`. It's safe to re-run.
 
 ## Duplicates and backups
 
