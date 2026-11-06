@@ -3,6 +3,8 @@ import base64
 import io
 import logging
 from contextlib import contextmanager
+from html import escape
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -39,6 +41,45 @@ def database_errors(action):
         st.stop()
 
 
+@st.cache_data(show_spinner=False, max_entries=20)
+def _data_uri(data):
+    from PIL import Image
+
+    fmt = (Image.open(io.BytesIO(data)).format or "PNG").lower()
+    return f"data:image/{fmt};base64," + base64.b64encode(data).decode()
+
+
+def crisp_image(image, width, caption=None, alt=""):
+    """Show an image `width` CSS px wide, sharp on phones and Retina screens.
+
+    st.image(width=N) resizes the picture on the server to exactly N pixels, which a 2-3x
+    screen then stretches and blurs. Here the full-resolution file goes to the browser,
+    which scales it down itself. `image` is a file path or bytes.
+    """
+    data = Path(image).read_bytes() if isinstance(image, (str, Path)) else image
+    html = f'<img src="{_data_uri(data)}" width="{int(width)}" alt="{escape(alt)}" style="display:block;border-radius:0.5rem">'
+    if caption:
+        html += f'<div style="font-size:0.875rem;opacity:0.7;margin-top:0.25rem">{escape(caption)}</div>'
+    st.markdown(html, unsafe_allow_html=True)
+
+
+def brand_header(logo, title, logo_px=72):
+    """Logo and page title on one line, vertically centred; on narrow phones the title wraps below.
+
+    One HTML block instead of st.container + st.title, whose built-in spacing left the logo
+    lower than the title and touching the content below it.
+    """
+    data = Path(logo).read_bytes()
+    st.markdown(
+        f'''<div style="display:flex;flex-wrap:wrap;align-items:center;gap:0.5rem 1rem;margin:0 0 1.5rem">
+          <img src="{_data_uri(data)}" width="{logo_px}" height="{logo_px}" alt=""
+               style="display:block;flex:none;border-radius:0.75rem;object-fit:cover">
+          <h1 style="margin:0;padding:0;line-height:1.15">{escape(title)}</h1>
+        </div>''',
+        unsafe_allow_html=True,
+    )
+
+
 def avatar(name):
     """Path of a family member's profile photo, or None (then show 👤)."""
     path = AVATARS / f"{str(name or '').strip().casefold()}.png"
@@ -46,7 +87,7 @@ def avatar(name):
 
 
 @st.cache_data(show_spinner=False)
-def avatar_data_uri(name, size=48):
+def avatar_data_uri(name, size=96):  # 96 px source for a ~32 px cell: sharp at 3x
     """Small inline copy of the profile photo for table image columns (None if there is none)."""
     from PIL import Image
 

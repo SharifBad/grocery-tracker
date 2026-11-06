@@ -96,10 +96,13 @@ Measured 2026-11-06 with gemini-3.8-flash on simulated phone photos of 25- and 4
 
 ## Logo and profile photos
 
-- `assets/logo.png` (`config.LOGO`): a cartoon of the family (512 px), shown on the sign-in page and in the header via `st.logo`. `assets/favicon.png` (`config.FAVICON`) is a round crop of cartoon Bibi for the browser tab. The originals (`logo.jpeg` photo, `logo-cartoon-original.png`) are gitignored; only cartoon images are committed because the repo is public.
+- `assets/logo.png` (`config.LOGO`): a cartoon of the family (512 px), shown on the sign-in page only (`ui.brand_header`; there is no header logo after sign-in). `assets/favicon.png` (`config.FAVICON`) is a round crop of cartoon Bibi for the browser tab. The originals (`logo.jpeg` photo, `logo-cartoon-original.png`) are gitignored; only cartoon images are committed because the repo is public.
 - Profile photos: `assets/avatars/<lower-case name>.png`, e.g. `shiqing.png` and `charif.png` (cartoon crops of the logo). `ui.avatar(name)` finds them, ignoring case, and returns None, meaning 👤, for anyone without one. They appear in the top row, the 👤 menu, and the dashboard's "By family member" table (`ui.avatar_data_uri` for `ImageColumn`). To add someone, save a round 192 px PNG under their name.
 
 ## Conventions and gotchas
+
+- **Images:** use `ui.crisp_image(path_or_bytes, width)` rather than `st.image(..., width=N)`. Streamlit resizes the file on the server to exactly N px, which looks blurry on 2–3× phone and Retina screens. `crisp_image` sends the full-resolution file and lets the browser scale it. (`st.image` with no width is fine.)
+- **Sign-in page spacing:** the top padding there is reduced to 4.5rem. Below about 3.75rem, Streamlit's header bar covers the top of the logo.
 
 - `streamlit-cropper` (pinned 0.3.1) uses a fabric.js canvas. The first tap selects the box, and only then do the corner handles appear. A drag without a tap first moves the box instead of resizing it. The UI caption says so.
 - The cropper reads its starting box only when created. `photo_editor` therefore keeps `crop_start` fixed for each cropper key; the key changes on rotate or tilt. Passing a new start box on every run could make it jump while being dragged.

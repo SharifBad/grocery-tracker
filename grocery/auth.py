@@ -11,6 +11,7 @@ import time
 import streamlit as st
 
 from grocery.config import LOGO
+from grocery.ui import brand_header
 
 USER_KEY = "user"
 CODE_KEY = "code_fingerprint"
@@ -61,9 +62,10 @@ def require_family_member():
         return st.session_state[USER_KEY]
 
     st.session_state.pop(USER_KEY, None)
-    with st.container(horizontal=True, vertical_alignment="center"):
-        st.image(str(LOGO), width=72)
-        st.title("Bibi's Grocery Tracker")
+    # Less empty space above the logo (Streamlit's default is 6rem), but still clear of the
+    # 3.75rem header bar: any less and the bar covers the top of the logo.
+    st.markdown("<style>[data-testid='stMainBlockContainer'] {padding-top: 4.5rem}</style>", unsafe_allow_html=True)
+    brand_header(LOGO, "Bibi's Grocery Tracker")
     if not family or not _normalize_code(family_code):
         st.error('Sign-in isn\'t set up yet. Add `FAMILY = ["Name", ...]` and `FAMILY_CODE = "..."` to the app\'s secrets.')
         st.stop()
