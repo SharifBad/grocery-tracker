@@ -96,8 +96,8 @@ Measured 2026-11-06 with gemini-3.8-flash on simulated phone photos of 25- and 4
 
 ## Logo and profile photos
 
-- `assets/logo.png` (`config.LOGO`) is Bibi the cat, cropped from a family photo. It's the browser-tab icon, sits on the sign-in page, and goes in the header via `st.logo`. The original photo `logo.jpeg` is gitignored because it shows faces and the repo is public.
-- Profile photos: `assets/avatars/<lower-case name>.png`, e.g. `shiqing.png` and `charif.png`. `ui.avatar(name)` finds them, ignoring case, and returns None, meaning 👤, for anyone without one. They appear in the top row, the 👤 menu, and the dashboard's "By family member" table (`ui.avatar_data_uri` for `ImageColumn`). To add someone, save a round 192 px PNG under their name.
+- `assets/logo.png` (`config.LOGO`): a cartoon of the family (512 px), shown on the sign-in page and in the header via `st.logo`. `assets/favicon.png` (`config.FAVICON`) is a round crop of cartoon Bibi for the browser tab. The originals (`logo.jpeg` photo, `logo-cartoon-original.png`) are gitignored; only cartoon images are committed because the repo is public.
+- Profile photos: `assets/avatars/<lower-case name>.png`, e.g. `shiqing.png` and `charif.png` (cartoon crops of the logo). `ui.avatar(name)` finds them, ignoring case, and returns None, meaning 👤, for anyone without one. They appear in the top row, the 👤 menu, and the dashboard's "By family member" table (`ui.avatar_data_uri` for `ImageColumn`). To add someone, save a round 192 px PNG under their name.
 
 ## Conventions and gotchas
 

@@ -3,11 +3,11 @@ import streamlit as st
 
 from grocery import db
 from grocery.auth import require_family_member, sign_out
-from grocery.config import LOGO
+from grocery.config import FAVICON, LOGO
 from grocery.ui import avatar
 from grocery.utils import today
 
-st.set_page_config(page_title="Grocery Tracker", page_icon=str(LOGO), layout="centered")
+st.set_page_config(page_title="Grocery Tracker", page_icon=str(FAVICON), layout="centered")
 
 user = require_family_member()
 st.logo(str(LOGO), size="large")

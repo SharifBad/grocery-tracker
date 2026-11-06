@@ -11,5 +11,6 @@ venv/
 .pytest_cache/
 tests/sql/node_modules/
 
-# Original family photo the logo was cropped from (faces; the repo is public)
+# Originals the logo/avatars were made from (the repo is public; only cartoon crops are committed)
 logo.jpeg
+logo-cartoon-original.png

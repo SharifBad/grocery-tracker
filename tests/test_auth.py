@@ -74,3 +74,13 @@ def test_missing_setup_is_explained():
         at = no_exc(make_app(**kwargs).run())
         assert any("isn't set up yet" in e.value for e in at.error), kwargs
 
+
+def test_name_ignores_capitals_and_always_gets_the_same_account_and_photo(store):
+    from grocery.ui import avatar
+
+    for typed in ("SHIQING", "shiqing", "Shiqing", " sHiQiNg "):
+        at = sign_in(no_exc(make_app(family=["Shiqing", "Charif"]).run()), typed, CODE)
+        no_exc(at)
+        assert at.session_state["user"] == "Shiqing", typed
+        assert avatar(at.session_state["user"]) and avatar(typed), typed
+    assert avatar("CHARIF") == avatar("charif") == avatar("Charif")
