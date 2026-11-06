@@ -54,11 +54,13 @@ def store(monkeypatch):
     monkeypatch.setattr(db, "delete_receipt", lambda rid: receipts.pop(rid))
     monkeypatch.setattr(db, "export_csv", lambda: b"receipt_id\n")
 
-    memory = {}
+    memory, budgets = {}, {}
     monkeypatch.setattr(db, "load_category_memory", lambda: dict(memory))
     monkeypatch.setattr(db, "remember_categories", lambda corrections, user: memory.update(corrections))
-    receipts_fixture_extras.update(memory=memory)
+    monkeypatch.setattr(db, "load_budgets", lambda: {k: v for k, v in budgets.items() if v > 0})
+    monkeypatch.setattr(db, "save_budgets", lambda amounts, user: budgets.update(amounts))
+    receipts_fixture_extras.update(memory=memory, budgets=budgets)
     return receipts
 
 
-receipts_fixture_extras = {}  # the store fixture's category memory, for tests to inspect
+receipts_fixture_extras = {}  # the store fixture's category memory and budgets, for tests to inspect

@@ -41,8 +41,17 @@ create table if not exists category_memory (
   updated_at timestamptz not null default now()
 );
 
+-- Monthly budgets. category = 'TOTAL' is the overall budget; 0 means no budget.
+create table if not exists budgets (
+  category   text primary key,
+  amount     numeric(10,2) not null check (amount >= 0),
+  updated_by text,
+  updated_at timestamptz not null default now()
+);
+
 alter table category_memory enable row level security;
-revoke all on category_memory from anon, authenticated;
+alter table budgets enable row level security;
+revoke all on category_memory, budgets from anon, authenticated;
 
 -- One row per item with its receipt's date/store/uploader: what the dashboard reads.
 create or replace view item_lines with (security_invoker = true) as

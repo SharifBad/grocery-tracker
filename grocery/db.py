@@ -143,3 +143,23 @@ def remember_categories(corrections, user):
         client().table("category_memory").upsert(rows, on_conflict="name_key").execute()
     finally:
         load_category_memory.clear()
+
+
+# --- Monthly budgets (table budgets; 'TOTAL' is the overall budget) ---
+@st.cache_data(ttl=60, show_spinner=False)
+def load_budgets():
+    rows = client().table("budgets").select("category, amount").execute().data
+    return {r["category"]: float(r["amount"]) for r in rows if float(r["amount"]) > 0}
+
+
+def save_budgets(amounts, user):
+    """{category or 'TOTAL': amount}; 0 or empty removes that budget."""
+    keep = [{"category": c, "amount": round(float(a), 2), "updated_by": user} for c, a in amounts.items() if a and a > 0]
+    drop = [c for c, a in amounts.items() if not a or a <= 0]
+    try:
+        if keep:
+            client().table("budgets").upsert(keep, on_conflict="category").execute()
+        if drop:
+            client().table("budgets").delete().in_("category", drop).execute()
+    finally:
+        load_budgets.clear()

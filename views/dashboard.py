@@ -1,11 +1,59 @@
-"""Monthly spending overview with comparison to the previous month and a 12-month trend."""
+"""Monthly spending overview: budget, comparison to the previous month, breakdowns, 12-month trend."""
+import logging
+
 import streamlit as st
 
 from grocery import db
-from grocery.ui import avatar_data_uri, database_errors, euro, month_picker
+from grocery.auth import current_user
+from grocery.config import CATEGORIES
+from grocery.ui import avatar_data_uri, database_errors, euro, flash, month_picker
 from grocery.utils import month_label, pretty_month, shift_month, week_label
 
+log = logging.getLogger(__name__)
+TOTAL = "TOTAL"  # budgets key for the overall monthly budget
+
+
+def budget_section(cur):
+    """Progress against this month's budgets, and a menu to change them."""
+    try:
+        budgets = db.load_budgets()
+    except Exception:  # e.g. the budgets table isn't created yet
+        log.warning("Couldn't load budgets", exc_info=True)
+        return
+    by_category = cur.groupby("category")["price"].sum()
+    rows = [(TOTAL, cur["price"].sum())] + [(c, by_category.get(c, 0.0)) for c in CATEGORIES if c in budgets]
+    for name, used in rows:
+        limit = budgets.get(name)
+        if not limit:
+            continue
+        ratio = used / limit
+        label = "Total" if name == TOTAL else name
+        text = f"**{label}**: {euro(used)} of {euro(limit)} ({ratio:.0%})"
+        st.progress(min(max(ratio, 0.0), 1.0), text=text)
+        if ratio >= 1:
+            st.error(f"{label} is over budget by {euro(used - limit)}.", icon="🚨")
+        elif ratio >= 0.8:
+            st.warning(f"{label} has {euro(limit - used)} left this month.", icon="⚠️")
+
+    with st.popover("🎯 Set monthly budgets" if not budgets else "🎯 Change budgets"):
+        with st.form("budgets"):
+            st.caption("Shared by the whole family. Leave 0 for no budget.")
+            amounts = {TOTAL: st.number_input("Total per month (€)", min_value=0.0, step=10.0, value=budgets.get(TOTAL, 0.0))}
+            for c in CATEGORIES:
+                amounts[c] = st.number_input(f"{c} (€)", min_value=0.0, step=5.0, value=budgets.get(c, 0.0))
+            if st.form_submit_button("Save budgets", type="primary"):
+                try:
+                    db.save_budgets(amounts, current_user())
+                except Exception:
+                    log.exception("Saving budgets failed")
+                    st.error("Couldn't save the budgets. Try again in a moment.")
+                    st.stop()
+                flash("Budgets saved.")
+                st.rerun()
+
+
 st.title("📊 Dashboard")
+flash()
 
 with database_errors("load your spending"):
     df = db.load_item_lines()
@@ -28,6 +76,7 @@ m1.metric(
 )
 m2.metric("Receipts", cur["receipt_id"].nunique())
 m3.metric("Items", len(cur))
+budget_section(cur)
 
 if cur.empty:
     st.info(f"Nothing logged for {pretty_month(month)} yet.")

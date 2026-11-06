@@ -79,13 +79,17 @@ const priv = (await db.query(`select
   (select relrowsecurity from pg_class where relname='items') f`)).rows[0];
 ok(!priv.a && !priv.b && priv.c && !priv.d && priv.e && priv.f, "only service_role can call save_receipt; RLS on; anon can't read the view");
 
-// category memory
+// category memory + budgets
 await db.query("insert into category_memory (name_key, category, updated_by) values ('haferfl zart', 'Pantry', 'Bibi') on conflict (name_key) do update set category = excluded.category");
 await db.query("insert into category_memory (name_key, category, updated_by) values ('haferfl zart', 'Bakery', 'Dad') on conflict (name_key) do update set category = excluded.category");
 ok((await db.query("select category from category_memory where name_key='haferfl zart'")).rows[0].category === "Bakery", "category memory upserts by item name");
-const priv2 = (await db.query(`select has_table_privilege('anon', 'category_memory', 'select') a,
-  (select relrowsecurity from pg_class where relname='category_memory') d`)).rows[0];
-ok(!priv2.a && priv2.d, "new table locked down like the others");
+await db.query("insert into budgets (category, amount) values ('TOTAL', 450), ('Snacks & Sweets', 40)");
+failed = false;
+try { await db.query("insert into budgets (category, amount) values ('Drinks', -5)"); } catch { failed = true; }
+ok(failed, "negative budget rejected");
+const priv2 = (await db.query(`select has_table_privilege('anon', 'category_memory', 'select') a, has_table_privilege('anon', 'budgets', 'insert') b,
+  (select relrowsecurity from pg_class where relname='budgets') c, (select relrowsecurity from pg_class where relname='category_memory') d`)).rows[0];
+ok(!priv2.a && !priv2.b && priv2.c && priv2.d, "new tables locked down like the others");
 
 console.log(failures ? `\n${failures} FAILED` : "\nall SQL tests passed");
 process.exit(failures ? 1 : 0);
