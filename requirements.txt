@@ -1,7 +1,5 @@
-streamlit
+streamlit>=1.50
 google-genai>=1.15.0
-gspread
-google-auth
+supabase>=2.0
 pandas
 qrcode[pil]
-Pillow
