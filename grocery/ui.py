@@ -84,13 +84,12 @@ def receipt_editor(key, *, purchased_on, store, total, items):
     }
 
 
-def show_receipt_file(load, mime, filename):
-    """Show a receipt image (or a PDF download). `load` is the bytes or a callable returning them."""
+def show_receipt_file(data, mime, filename):
+    """Preview the just-uploaded receipt while reviewing it. The file itself is never stored."""
+    if mime == "application/pdf" or filename.lower().endswith(".pdf"):
+        st.caption("No preview for PDFs.")
+        return
     try:
-        data = load() if callable(load) else load
-        if mime == "application/pdf" or filename.lower().endswith(".pdf"):
-            st.download_button("⬇️ Download receipt PDF", data, file_name=filename.rsplit("/", 1)[-1], mime="application/pdf")
-        else:
-            st.image(data)
+        st.image(data)
     except Exception:
-        st.caption("Couldn't load the receipt file.")
+        st.caption("Couldn't preview this file.")

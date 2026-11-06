@@ -4,7 +4,7 @@ import streamlit as st
 
 from grocery import db
 from grocery.auth import current_user
-from grocery.ui import euro, flash, month_picker, receipt_editor, show_receipt_file
+from grocery.ui import euro, flash, month_picker, receipt_editor
 from grocery.utils import month_bounds, pretty_month
 
 st.title("🧾 Receipt history")
@@ -46,10 +46,6 @@ if r.get("updated_by"):
     meta += f" · last edited by {r['updated_by']}"
 st.caption(meta)
 
-if r.get("image_path"):
-    with st.expander("🧾 Show receipt"):
-        show_receipt_file(lambda: db.get_image(r["image_path"]), None, r["image_path"])
-
 edited = receipt_editor(
     f"edit_{r['id']}_{st.session_state.get('history_rev', 0)}",
     purchased_on=pd.to_datetime(r["purchased_on"]).date(),
@@ -77,5 +73,5 @@ if c1.button("💾 Save changes", type="primary", disabled=not edited["items"], 
 with c2.popover("🗑️ Delete", width="stretch"):
     st.write(f"Delete this {r['store']} receipt and its {len(r['items'])} items? This can't be undone.")
     if st.button("Yes, delete it", type="primary"):
-        db.delete_receipt(r["id"], r.get("image_path"))
+        db.delete_receipt(r["id"])
         done(f"Deleted the {r['store']} receipt.")
