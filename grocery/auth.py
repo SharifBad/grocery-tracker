@@ -7,6 +7,12 @@ which makes guessing the code impractical without ever locking the family out.
 "Stay signed in" keeps a signed cookie on the device for 30 days: name + expiry + an HMAC keyed
 with the family code, so it can't be forged, and changing FAMILY_CODE (or removing the name from
 FAMILY) invalidates it. Sign out deletes it.
+
+Streamlit Community Cloud's proxy doesn't pass the cookie on to the app server (st.context.cookies
+never sees it there), so on the sign-in page a small script reads it in the browser and reloads
+the app's frame once with ?remember=<token> (only its own frame: Cloud's iframe sandbox forbids
+navigating the outer page). The app checks that token and removes it from the address.
+Locally the cookie is read directly and the script never runs.
 """
 import base64
 import hashlib
@@ -21,6 +27,7 @@ from grocery.ui import brand_header
 USER_KEY = "user"
 CODE_KEY = "code_fingerprint"
 COOKIE = "gt_remember"
+REMEMBER_PARAM = "remember"
 REMEMBER_DAYS = 30
 
 
@@ -101,6 +108,35 @@ def _cookie_value():
         return None
 
 
+def _hand_over_cookie():
+    """Browser-side: reload once with ?remember=<cookie> so the app can read it (see module docstring)."""
+    st.html(
+        f"""<script>
+(() => {{
+  const found = document.cookie.match(/(?:^|; ){COOKIE}=([^;]+)/);
+  if (!found) return;
+  // Reload only the app's own frame: Cloud sandboxes it without permission to navigate the outer page.
+  const url = new URL(window.location.href);
+  if (url.searchParams.has("{REMEMBER_PARAM}")) return;  // already handed over once: never loop
+  url.searchParams.set("{REMEMBER_PARAM}", found[1]);
+  window.location.replace(url.toString());
+}})();
+</script>""",
+        unsafe_allow_javascript=True,
+    )
+
+
+def _take_query_token():
+    """The ?remember= token, removed from the address so it doesn't linger in the URL."""
+    try:
+        token = st.query_params.get(REMEMBER_PARAM)
+        if token is not None:
+            del st.query_params[REMEMBER_PARAM]
+        return token
+    except Exception:
+        return None
+
+
 def require_family_member():
     """Return the signed-in family member's name, or render the sign-in form and stop."""
     family = _family()
@@ -115,9 +151,11 @@ def require_family_member():
         return st.session_state[USER_KEY]
 
     st.session_state.pop(USER_KEY, None)
+    handed_over = _take_query_token()
+    signed_out = st.session_state.get("_signed_out", False)
     # Remembered on this device? (Not right after signing out: this session still sees the old cookie.)
-    if family and _normalize_code(family_code) and not st.session_state.get("_signed_out"):
-        remembered = read_token(_cookie_value(), family_code, family)
+    if family and _normalize_code(family_code) and not signed_out:
+        remembered = read_token(_cookie_value(), family_code, family) or read_token(handed_over, family_code, family)
         if remembered:
             st.session_state[USER_KEY] = remembered
             st.session_state[CODE_KEY] = _fingerprint(family_code)
@@ -136,8 +174,10 @@ def require_family_member():
         code = st.text_input("Family code", type="password")
         remember = st.checkbox(f"Stay signed in on this device ({REMEMBER_DAYS} days)", value=True)
         submitted = st.form_submit_button("Enter", type="primary")
-    if st.session_state.pop("_clear_cookie", False):
-        _set_cookie("", 0)
+    if st.session_state.pop("_clear_cookie", False) or handed_over:
+        _set_cookie("", 0)  # signed out, or the remembered login is no longer valid: forget it
+    elif not signed_out:
+        _hand_over_cookie()
     if submitted:
         match = next((n for n in family if n.casefold() == name.strip().casefold()), None)
         code_ok = hmac.compare_digest(_normalize_code(code).encode(), _normalize_code(family_code).encode())
