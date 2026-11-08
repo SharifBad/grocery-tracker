@@ -118,10 +118,33 @@ def store_options(used=()):
     return list(STORES) + others
 
 
-def receipt_editor(key, values, stores=None):
+def payer_picker(key, values, user, family):
+    """"I paid for this" (on by default); off means another family member paid. Returns the payer.
+
+    With two people, off simply means the other one; with more, a dropdown asks who.
+    """
+    paid_by = values.get("paid_by") or user
+    others = [n for n in family if n.casefold() != user.casefold()]
+    if paid_by != user and paid_by not in others:
+        others.insert(0, paid_by)  # e.g. someone no longer in FAMILY
+    if not others:
+        return user
+    if not st.toggle("🙋 I paid for this", value=paid_by == user, key=f"{key}_paid_me"):
+        if len(others) == 1:
+            paid_by = others[0]
+            st.caption(f"Paid by **{paid_by}**")
+        else:
+            paid_by = st.selectbox("Who paid?", others, index=others.index(paid_by) if paid_by in others else 0,
+                                   key=f"{key}_paid_by")
+    else:
+        paid_by = user
+    return paid_by
+
+
+def receipt_editor(key, values, stores=None, user=None, family=()):
     """Editable receipt header + items table. Returns the cleaned values.
 
-    `values` ({purchased_on, store, total, items}) is updated in place with every edit. Keep it in
+    `values` ({purchased_on, store, total, paid_by, items}) is updated in place with every edit. Keep it in
     session state (like the upload draft) and edits survive the form going off screen, e.g. a
     visit to another page: Streamlit drops widget state then, and the form restarts from `values`.
     Widget keys are derived from `key`; pass a new key to reset the form to new data.
@@ -143,6 +166,7 @@ def receipt_editor(key, values, stores=None):
         c2.caption(f"Saved as **{store}**")
     # No minimum: refund receipts can have a negative total.
     total = c3.number_input("Receipt total (€)", value=values["total"], step=0.01, format="%.2f", key=f"{key}_total")
+    paid_by = payer_picker(key, values, user, family) if user else values.get("paid_by")
 
     # The data editor resets whenever its input data changes, so its input stays fixed while it is
     # on screen and is refreshed from `values` only when the editor is created anew.
@@ -176,7 +200,7 @@ def receipt_editor(key, values, stores=None):
         quantity = 1.0 if pd.isna(row["quantity"]) or float(row["quantity"]) <= 0 else round(float(row["quantity"]), 3)
         clean.append({"name": name, "category": normalize_category(row["category"]), "price": price, "quantity": quantity})
 
-    values.update(purchased_on=purchased_on, store=store, total=total, items=clean)
+    values.update(purchased_on=purchased_on, store=store, total=total, paid_by=paid_by, items=clean)
     items_sum = round(sum(i["price"] for i in clean), 2)
     st.caption(f"{len(clean)} items · add up to {euro(items_sum)}")
     if total is not None and abs(items_sum - total) > 0.05:
@@ -189,6 +213,7 @@ def receipt_editor(key, values, stores=None):
         "purchased_on": purchased_on,
         "store": store,
         "total": None if total is None else round(total, 2),
+        "paid_by": paid_by,
         "items": clean,
     }
 

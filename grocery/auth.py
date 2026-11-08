@@ -203,3 +203,8 @@ def sign_out():
 
 def current_user():
     return st.session_state[USER_KEY]
+
+
+def family_members():
+    """Everyone in FAMILY, as written in the secrets."""
+    return _family()

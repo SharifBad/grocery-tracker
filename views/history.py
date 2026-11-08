@@ -11,7 +11,7 @@ import pandas as pd
 import streamlit as st
 
 from grocery import db
-from grocery.auth import current_user
+from grocery.auth import current_user, family_members
 from grocery.ui import database_errors, euro, flash, month_picker, receipt_editor, store_options
 from grocery.utils import canonical_store, item_key, month_bounds, month_label, pretty_month
 
@@ -48,11 +48,11 @@ def search(item_lines, query):
                "Tap a row to open that receipt.")
     st.session_state[SEARCH_HITS] = [(r, month_label(d)) for r, d in zip(hits["receipt_id"], hits["purchased_on"])]
     st.dataframe(
-        hits[["purchased_on", "store", "name", "category", "price", "uploaded_by"]],
+        hits[["purchased_on", "store", "name", "category", "price", "paid_by"]],
         hide_index=True, width="stretch", on_select=open_from_search, selection_mode="single-row",
         key="history_search_results",
         column_config={"purchased_on": "Date", "store": "Store", "name": "Item", "category": "Category",
-                       "price": st.column_config.NumberColumn("Price (€)", format="€%.2f"), "uploaded_by": "Added by"},
+                       "price": st.column_config.NumberColumn("Price (€)", format="€%.2f"), "paid_by": "Paid by"},
     )
 
 
@@ -75,7 +75,7 @@ table = pd.DataFrame(
         "Store": [r["store"] for r in receipts],
         "Total": [r["total"] if r["total"] is not None else sum(i["price"] for i in r["items"]) for r in receipts],
         "Items": [len(r["items"]) for r in receipts],
-        "Added by": [r["uploaded_by"] for r in receipts],
+        "Paid by": [db.paid_by(r) for r in receipts],
     }
 )
 # A new table key whenever the list of receipts changes, so a stale row selection is never reused.
@@ -105,6 +105,8 @@ if r is None:
 st.divider()
 st.subheader(f"{r['store']} · {r['purchased_on']}")
 meta = f"Added by {r['uploaded_by']}"
+if db.paid_by(r) != r["uploaded_by"]:
+    meta += f" · paid by {db.paid_by(r)}"
 if r.get("updated_by"):
     meta += f" · last edited by {r['updated_by']}"
 st.caption(meta)
@@ -116,10 +118,12 @@ if values_key not in st.session_state:
         "purchased_on": pd.to_datetime(r["purchased_on"]).date(),
         "store": r["store"],
         "total": float(r["total"]) if r["total"] is not None else None,
+        "paid_by": db.paid_by(r),
         "items": [{"name": i["name"], "category": i["category"], "price": i["price"], "quantity": i.get("quantity") or 1}
                   for i in r["items"]],
     }
-edited = receipt_editor(f"edit_{rid}_{rev}", st.session_state[values_key], stores=store_options(item_lines["store"].unique()))
+edited = receipt_editor(f"edit_{rid}_{rev}", st.session_state[values_key], stores=store_options(item_lines["store"].unique()),
+                        user=current_user(), family=family_members())
 
 
 def done(message):
@@ -139,7 +143,7 @@ def failed(action):
 c1, c2 = st.columns([2, 1])
 if c1.button("💾 Save changes", key=f"save_{rid}", type="primary", disabled=not edited["items"], width="stretch"):
     try:
-        db.save_receipt({k: edited[k] for k in ("purchased_on", "store", "total")}, edited["items"],
+        db.save_receipt({k: edited[k] for k in ("purchased_on", "store", "total", "paid_by")}, edited["items"],
                         user=current_user(), receipt_id=rid)
     except Exception:
         failed("save")
