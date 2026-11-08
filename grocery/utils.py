@@ -50,12 +50,6 @@ def month_label(d):
     return f"{d:%Y-%m}"
 
 
-def week_label(d):
-    """ISO week, labelled with the ISO year so late-Dec/early-Jan dates land in the right week."""
-    iso_year, iso_week, _ = d.isocalendar()
-    return f"{iso_year}-W{iso_week:02d}"
-
-
 def shift_month(label, n):
     year, month = map(int, label.split("-"))
     idx = year * 12 + (month - 1) + n
@@ -66,6 +60,42 @@ def month_bounds(label):
     """'2026-11' -> (date(2026, 11, 1), date(2026, 12, 1)), end exclusive."""
     start = datetime.date.fromisoformat(f"{label}-01")
     return start, datetime.date.fromisoformat(f"{shift_month(label, 1)}-01")
+
+
+def month_weeks(label):
+    """The Monday-to-Sunday weeks of a month, cut at the month's edges: [(first_day, last_day), ...].
+
+    November 2026 starts on a Sunday, so its first "week" is just 1 Nov; the rest of that week
+    belongs to October.
+    """
+    start, end = month_bounds(label)
+    weeks, day = [], start
+    while day < end:
+        last = min(day + datetime.timedelta(days=6 - day.weekday()), end - datetime.timedelta(days=1))
+        weeks.append((day, last))
+        day = last + datetime.timedelta(days=1)
+    return weeks
+
+
+def week_span_label(first, last):
+    """(2 Nov, 8 Nov) -> '2–8 Nov'; a one-day week -> '1 Nov'."""
+    return f"{first.day} {last:%b}" if first == last else f"{first.day}–{last.day} {last:%b}"
+
+
+def spending_by_week(label, purchases, until=None):
+    """[{"week": "2–8 Nov", "spent": 104.7}, ...] for each week of month `label` (see month_weeks).
+
+    `purchases` is (date, price) pairs. The bars add up to the month's total. Weeks without
+    shopping are 0; weeks starting after `until` (today, for this month) are left out unless
+    something is already dated in them.
+    """
+    purchases = list(purchases)
+    rows = []
+    for first, last in month_weeks(label):
+        spent = round(sum(float(p) for d, p in purchases if first <= d <= last), 2)
+        if until is None or first <= until or spent:
+            rows.append({"week": week_span_label(first, last), "spent": spent})
+    return rows
 
 
 def pretty_month(label):

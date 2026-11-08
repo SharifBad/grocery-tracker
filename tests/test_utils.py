@@ -8,10 +8,12 @@ from grocery.utils import (
     normalize_category,
     pretty_month,
     same_store,
+    spending_by_week,
     shift_month,
     store_key,
+    month_weeks,
     to_money,
-    week_label,
+    week_span_label,
 )
 
 
@@ -31,9 +33,25 @@ def test_normalize_category():
     assert normalize_category("Garden") == "Other" and normalize_category(None) == "Other"
 
 
-def test_week_label_uses_iso_year():
-    assert week_label(datetime.date(2027, 1, 1)) == "2026-W53"
-    assert week_label(datetime.date(2024, 12, 30)) == "2025-W01"
+def test_month_weeks_run_monday_to_sunday_inside_the_month():
+    d = datetime.date
+    nov = month_weeks("2026-11")  # starts on a Sunday, ends on a Monday
+    assert nov[0] == (d(2026, 11, 1), d(2026, 11, 1)) and nov[1] == (d(2026, 11, 2), d(2026, 11, 8))
+    assert nov[-1] == (d(2026, 11, 30), d(2026, 11, 30)) and len(nov) == 6
+    assert sum((b - a).days + 1 for a, b in nov) == 30, "every day exactly once"
+    assert month_weeks("2027-02")[0] == (d(2027, 2, 1), d(2027, 2, 7)) and len(month_weeks("2027-02")) == 4
+    assert [week_span_label(a, b) for a, b in nov[:2]] == ["1 Nov", "2–8 Nov"]
+
+
+def test_spending_by_week_adds_up_to_the_month_and_skips_weeks_still_to_come():
+    d = datetime.date
+    buys = [(d(2026, 11, 1), 42.1), (d(2026, 11, 3), 18.5), (d(2026, 11, 8), 61.2), (d(2026, 11, 20), 5.0)]
+    rows = spending_by_week("2026-11", buys)
+    assert rows == [{"week": "1 Nov", "spent": 42.1}, {"week": "2–8 Nov", "spent": 79.7}, {"week": "9–15 Nov", "spent": 0},
+                    {"week": "16–22 Nov", "spent": 5.0}, {"week": "23–29 Nov", "spent": 0}, {"week": "30 Nov", "spent": 0}]
+    assert round(sum(r["spent"] for r in rows), 2) == round(sum(p for _, p in buys), 2)
+    so_far = spending_by_week("2026-11", buys, until=d(2026, 11, 10))
+    assert [r["week"] for r in so_far] == ["1 Nov", "2–8 Nov", "9–15 Nov", "16–22 Nov"], "future weeks only if already dated"
 
 
 def test_month_helpers():

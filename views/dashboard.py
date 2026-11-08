@@ -1,13 +1,14 @@
 """Monthly spending overview: budget, comparison to the previous month, breakdowns, Pfand, 12-month trend."""
 import logging
 
+import pandas as pd
 import streamlit as st
 
 from grocery import db
 from grocery.auth import current_user
 from grocery.config import CATEGORIES
 from grocery.ui import avatar_data_uri, database_errors, euro, flash, month_picker
-from grocery.utils import is_pfand, month_label, pretty_month, shift_month, week_label
+from grocery.utils import is_pfand, month_label, pretty_month, shift_month, spending_by_week, today
 
 log = logging.getLogger(__name__)
 TOTAL = "TOTAL"  # budgets key for the overall monthly budget
@@ -102,7 +103,9 @@ else:
         st.bar_chart(cur.groupby("category")["price"].sum(), horizontal=True)
     with c2:
         st.subheader("🗓️ By week")
-        st.bar_chart(cur.assign(week=cur["purchased_on"].map(week_label)).groupby("week")["price"].sum())
+        weeks = pd.DataFrame(spending_by_week(month, zip(cur["purchased_on"], cur["price"]), until=today()),
+                             columns=["week", "spent"])
+        st.bar_chart(weeks, x="week", y="spent", sort=False, x_label="", y_label="€")
 
     st.subheader("🏪 By store")
     by_store = (

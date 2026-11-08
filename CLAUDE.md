@@ -13,7 +13,7 @@
   - `qr.py`: QR code for the fridge.
 - `grocery/`: the package the pages import.
   - `config.py`: constants (`CATEGORIES`, `GEMINI_MODEL`, retry settings). Does not import Streamlit.
-  - `utils.py`: pure helpers (`to_money`, `normalize_category`, month and week labels). Does not import Streamlit, so `scripts/` can use it.
+  - `utils.py`: pure helpers (`to_money`, `normalize_category`, month helpers, `month_weeks`). Does not import Streamlit, so `scripts/` can use it.
   - `auth.py`: sign-in. The typed name must match one in `st.secrets["FAMILY"]` (case-insensitive), and the shared `FAMILY_CODE` must match (case and surrounding spaces ignored). The canonical name goes in `st.session_state["user"]` and a fingerprint of the code in `"code_fingerprint"`; `current_user()` returns the name.
   - `imaging.py`: pure PIL/numpy. EXIF fix, rotate and tilt, auto-detected crop box (Otsu threshold), and `prepare_for_gemini` (crop, grayscale, shrink so the short side is 700 px, JPEG q80).
   - `photo_editor.py`: the photo UI. ↺/↻ buttons, a tilt slider (±15°), a crop box (`streamlit-cropper`), and a preview of what Gemini will see. The photo and its adjustments live in `st.session_state["photo"]`, not in the file uploader, so they survive page switches and the review step; `sync_upload` loads new files and forgets the photo when it's removed with ✕. `remount()` makes the cropper restart from the last crop when it comes back on screen.
@@ -29,7 +29,7 @@
 - `items`: id, receipt_id → receipts (on delete cascade), name, category, price, quantity. Price is the **line total** and may be negative for discounts. Quantity is pieces, or kg for weighed items; it defaults to 1 and must be > 0.
 - `item_lines` view: items joined with their receipt's date, store, uploader and payer (`coalesce(paid_by, uploaded_by)`). The dashboard reads this. New view columns must go at the end: `create or replace view` can only append.
 - **All writes go through `save_receipt(p_receipt, p_items, p_user, p_id)`.** It creates the receipt, or updates it and replaces its items, in one transaction. Don't insert into the tables separately.
-- Week and month are computed in Python from `purchased_on`, not stored. Weeks use the ISO year (`week_label`).
+- Week and month are computed in Python from `purchased_on`, not stored. The dashboard's "By week" uses `utils.month_weeks`: Monday-to-Sunday weeks cut at the month's edges, labelled with their dates ("1 Nov", "2–8 Nov"), so the bars add up to the month's total. Empty weeks show as 0. (It used ISO week numbers before: a month starting on a Sunday showed that one day as a whole "week", and "2026-W45" meant nothing to anyone.)
 - **Receipt photos are never stored.** Gemini reads the cropped, shrunk JPEG, and the review step previews it from memory (`st.session_state["draft"]`). Only the extracted data and the uploader's name are saved. This was the owner's choice, to save space; don't add image storage back unless asked.
 
 ## Security model
