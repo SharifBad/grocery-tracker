@@ -28,6 +28,7 @@ await db.exec(schema);
 const cols = (await db.query("select column_name from information_schema.columns where table_name='receipts'")).rows.map((r) => r.column_name);
 ok(!cols.includes("image_path"), "upgrade drops receipts.image_path");
 ok((await db.query("select count(*)::int n from receipts where store='Old'")).rows[0].n === 1, "upgrade keeps existing receipts");
+ok((await db.query("select paid_by from receipts where store='Old'")).rows[0].paid_by === "x", "upgrade: existing receipts were paid by their uploader");
 await db.query("delete from receipts");
 
 const save = async (receipt, items, user, id = null) =>
@@ -85,6 +86,19 @@ const qid = await save({ purchased_on: "2026-11-05", store: "Lidl", total: 3.07 
    { name: "BROT", category: "Bakery", price: 0.30 }, { name: "X", category: "Other", price: 0, quantity: -3 }], "Bibi");
 const qrows = Object.fromEntries((await db.query("select name, quantity from item_lines where receipt_id=$1", [qid])).rows.map((r) => [r.name, r.quantity]));
 ok(qrows.JOGHURT === "2.000" && qrows.BANANEN === "0.512" && qrows.BROT === "1.000" && qrows.X === "1.000", "quantity stored (default 1, weights kept, invalid -> 1)");
+
+// paid_by: defaults to the uploader, can be someone else, kept on edit unless changed
+const mine = await save({ purchased_on: "2026-11-06", store: "REWE", total: 1 }, [], "Bibi");
+const theirs = await save({ purchased_on: "2026-11-06", store: "REWE", total: 2, paid_by: "Dad" }, [{ name: "Wein", category: "Drinks", price: 2 }], "Bibi");
+ok((await receipt(mine)).paid_by === "Bibi" && (await receipt(theirs)).paid_by === "Dad" && (await receipt(theirs)).uploaded_by === "Bibi",
+  "paid_by defaults to the uploader, or who was chosen");
+await save({ purchased_on: "2026-11-06", store: "REWE", total: 2 }, [], "Bibi", theirs);
+ok((await receipt(theirs)).paid_by === "Dad", "an edit without paid_by keeps it");
+await save({ purchased_on: "2026-11-06", store: "REWE", total: 2, paid_by: "Bibi" }, [{ name: "Wein", category: "Drinks", price: 2 }], "Dad", theirs);
+ok((await receipt(theirs)).paid_by === "Bibi", "an edit can change who paid");
+ok((await db.query("select paid_by from item_lines where receipt_id=$1", [theirs])).rows[0].paid_by === "Bibi", "item_lines has paid_by");
+await db.query("update receipts set paid_by = null where id=$1", [theirs]);
+ok((await db.query("select paid_by from item_lines where receipt_id=$1", [theirs])).rows[0].paid_by === "Bibi", "item_lines falls back to the uploader");
 
 // category memory + budgets
 await db.query("insert into category_memory (name_key, category, updated_by) values ('haferfl zart', 'Pantry', 'Bibi') on conflict (name_key) do update set category = excluded.category");

@@ -11,7 +11,7 @@ import streamlit as st
 
 from grocery import db
 from grocery import photo_editor as photo
-from grocery.auth import current_user
+from grocery.auth import current_user, family_members
 from grocery.config import UPLOAD_TYPES
 from grocery.extract import MAX_PARTS, ExtractionError, extract_receipt
 from grocery.ui import euro, flash, receipt_editor, show_receipt_file, store_options
@@ -32,7 +32,7 @@ if page_changed:
 def start_draft(**fields):
     st.session_state["draft_no"] = st.session_state.get("draft_no", 0) + 1  # fresh widget keys
     st.session_state[DRAFT] = {
-        "purchased_on": today(), "date_guessed": False, "store": "", "total": None, "items": [],
+        "purchased_on": today(), "date_guessed": False, "store": "", "total": None, "paid_by": current_user(), "items": [],
         "files": [], "suggested": {}, "remembered": 0, **fields,
     }
 
@@ -135,7 +135,8 @@ try:
     used_stores = db.load_item_lines()["store"].unique()
 except Exception:  # the dropdown still has the chain list
     used_stores = []
-receipt = receipt_editor(f"draft{st.session_state['draft_no']}", draft, stores=store_options(used_stores))
+receipt = receipt_editor(f"draft{st.session_state['draft_no']}", draft, stores=store_options(used_stores),
+                         user=current_user(), family=family_members())
 
 if receipt["store"] or receipt["total"] is not None:
     try:
@@ -155,7 +156,7 @@ b1, b2 = st.columns([2, 1])
 if b1.button("💾 Save receipt", type="primary", disabled=not receipt["items"], width="stretch"):
     try:
         db.save_receipt(
-            {k: receipt[k] for k in ("purchased_on", "store", "total")},
+            {k: receipt[k] for k in ("purchased_on", "store", "total", "paid_by")},
             receipt["items"],
             user=current_user(),
         )
@@ -165,7 +166,8 @@ if b1.button("💾 Save receipt", type="primary", disabled=not receipt["items"],
         st.stop()
     remember_corrections(draft["suggested"], receipt["items"])
     reset()
-    flash(f"Saved {len(receipt['items'])} items from {receipt['store'] or 'the receipt'} 🎉")
+    for_whom = f" (paid by {receipt['paid_by']})" if receipt["paid_by"] != current_user() else ""
+    flash(f"Saved {len(receipt['items'])} items from {receipt['store'] or 'the receipt'}{for_whom} 🎉")
     st.rerun()
 if b2.button("Discard", width="stretch"):
     reset()
