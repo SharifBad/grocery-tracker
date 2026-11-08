@@ -25,9 +25,9 @@
 
 ## Data model (Supabase Postgres)
 
-- `receipts`: id, purchased_on, store, total (nullable), uploaded_by (family member's name), created_at, updated_by, updated_at.
+- `receipts`: id, purchased_on, store, total (nullable), uploaded_by (family member's name), paid_by (who paid; defaults to the uploader), created_at, updated_by, updated_at.
 - `items`: id, receipt_id → receipts (on delete cascade), name, category, price, quantity. Price is the **line total** and may be negative for discounts. Quantity is pieces, or kg for weighed items; it defaults to 1 and must be > 0.
-- `item_lines` view: items joined with their receipt's date, store and uploader. The dashboard reads this.
+- `item_lines` view: items joined with their receipt's date, store, uploader and payer (`coalesce(paid_by, uploaded_by)`). The dashboard reads this. New view columns must go at the end: `create or replace view` can only append.
 - **All writes go through `save_receipt(p_receipt, p_items, p_user, p_id)`.** It creates the receipt, or updates it and replaces its items, in one transaction. Don't insert into the tables separately.
 - Week and month are computed in Python from `purchased_on`, not stored. Weeks use the ISO year (`week_label`).
 - **Receipt photos are never stored.** Gemini reads the cropped, shrunk JPEG, and the review step previews it from memory (`st.session_state["draft"]`). Only the extracted data and the uploader's name are saved. This was the owner's choice, to save space; don't add image storage back unless asked.
@@ -93,6 +93,7 @@ Measured 2026-11-06 with gemini-3.8-flash on simulated phone photos of 25- and 4
 
 ## Family features
 
+- **Paid by**: the review form (upload and History) has "🙋 I paid for this", on by default (`ui.payer_picker`). Off means the other family member paid; with 3+ people a "Who paid?" dropdown appears, and with one person there's no toggle. `uploaded_by` still records who added it. The dashboard's "By family member" table, the History table and search show who **paid**. Use `db.paid_by(receipt)`, which falls back to the uploader. `save_receipt` keeps the existing payer when an edit doesn't send one. Like quantity, `db._has_column("receipts", "paid_by")` lets the code deploy before `schema.sql` is re-run (everyone is then counted as having paid for what they uploaded).
 - **Remembered categories** (table `category_memory`, keyed by `utils.item_key(name)`): after a Gemini read, the upload page applies categories the family set before. On save, a category is remembered only when the user set it themselves: when it differs from what was suggested, or the item was added by hand. History edits are remembered too. Failures never block saving.
 - **Budgets** (table `budgets`; `TOTAL` is the overall budget): dashboard progress bars, a warning at 80%, an error when over, and a 🎯 popover to set them. If the table is missing, the section is simply hidden.
 - **Pfand**: lines matching `utils.is_pfand` (pfand, leergut, einweg, mehrweg). Positive means paid; negative means returned via a Leergut slip, and the prompt asks for those to be negative. The dashboard shows paid and returned this month, plus how much is still out overall.
@@ -108,7 +109,7 @@ Measured 2026-11-06 with gemini-3.8-flash on simulated phone photos of 25- and 4
 - Gemini writes `q` **only** when a line shows a quantity ("2 Stk x 0,89" → 2, "0,512 kg x 2,99 EUR/kg" → 0.512); otherwise it's 1. This costs ~20 prompt tokens plus a few per quantity line. Live check (2026-11-08), 25-item receipt with 6 quantity lines: 25/25 right twice, ~1,190 tokens, 0 thinking.
 - The review table has a "Qty" column, placed **last** so Item, Category and Price stay on screen on phones. It uses `step=0.001` and `format="plain"`: with `step=1` it showed 0.74 kg as "0" and could round weights on edit.
 - The Prices page compares the **unit price** (`price / quantity`), so buying two isn't a price jump. Totals, budgets and the add-up check use the line price.
-- `db._has_quantity()` (cached 10 min) checks whether `items.quantity` exists. Until `schema.sql` is re-run, the app doesn't ask for the column and treats every quantity as 1, so deploying the code first doesn't break anything.
+- `db._has_quantity()` (via `_has_column`, cached 10 min) checks whether `items.quantity` exists. Until `schema.sql` is re-run, the app doesn't ask for the column and treats every quantity as 1, so deploying the code first doesn't break anything.
 
 ## Duplicates and backups
 
