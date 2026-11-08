@@ -34,7 +34,8 @@ def store(monkeypatch):
     def load_item_lines():
         rows = [
             {"item_id": i["id"], "receipt_id": r["id"], "purchased_on": datetime.date.fromisoformat(r["purchased_on"]),
-             "store": r["store"], "uploaded_by": r["uploaded_by"], **{k: i[k] for k in ("name", "category", "price")}}
+             "store": r["store"], "uploaded_by": r["uploaded_by"], **{k: i[k] for k in ("name", "category", "price")},
+             "quantity": i.get("quantity") or 1}
             for r in receipts.values() for i in r["items"]
         ]
         return pd.DataFrame(rows, columns=db.ITEM_COLUMNS)

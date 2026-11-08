@@ -9,7 +9,25 @@ from supabase import create_client
 from grocery.utils import looks_like_duplicate, normalize_category
 
 PAGE_SIZE = 1000  # PostgREST's default max rows per request
-ITEM_COLUMNS = ["item_id", "receipt_id", "purchased_on", "store", "uploaded_by", "name", "category", "price"]
+ITEM_COLUMNS = ["item_id", "receipt_id", "purchased_on", "store", "uploaded_by", "name", "category", "price", "quantity"]
+
+
+@st.cache_resource(ttl=600)
+def _has_quantity():
+    """Does the database have items.quantity yet? (Added later: re-run supabase/schema.sql.)
+
+    Checked at most every 10 minutes, so the app works before the schema is updated (quantity 1)
+    and picks the column up soon after.
+    """
+    try:
+        client().table("items").select("quantity").limit(1).execute()
+        return True
+    except Exception:
+        return False
+
+
+def _item_fields(*fields):
+    return ", ".join([*fields, "quantity"] if _has_quantity() else fields)
 
 
 @st.cache_resource
@@ -39,12 +57,14 @@ def _invalidate():
 @st.cache_data(ttl=60, show_spinner=False)
 def load_item_lines():
     """Every item with its receipt's date/store/uploader, as a DataFrame."""
+    columns = ITEM_COLUMNS if _has_quantity() else ITEM_COLUMNS[:-1]
     rows = _fetch_all(
-        lambda: client().table("item_lines").select(",".join(ITEM_COLUMNS)).order("purchased_on").order("item_id")
+        lambda: client().table("item_lines").select(",".join(columns)).order("purchased_on").order("item_id")
     )
     df = pd.DataFrame(rows, columns=ITEM_COLUMNS)
     df["purchased_on"] = pd.to_datetime(df["purchased_on"]).dt.date
     df["price"] = pd.to_numeric(df["price"]).fillna(0.0)
+    df["quantity"] = pd.to_numeric(df["quantity"]).fillna(1.0)
     df["category"] = df["category"].map(normalize_category)  # receipts saved with earlier category names
     return df
 
@@ -55,7 +75,7 @@ def load_receipts(start, end):
     return _fetch_all(
         lambda: client()
         .table("receipts")
-        .select("*, items(id, name, category, price)")
+        .select(f"*, items({_item_fields('id', 'name', 'category', 'price')})")
         .gte("purchased_on", start.isoformat())
         .lt("purchased_on", end.isoformat())
         .order("purchased_on", desc=True)
@@ -80,13 +100,13 @@ def _csv_text(value):
 
 
 EXPORT_COLUMNS = ["receipt_id", "date", "store", "receipt_total", "added_by", "added_at",
-                  "edited_by", "edited_at", "item", "category", "price"]
+                  "edited_by", "edited_at", "item", "category", "price", "quantity"]
 
 
 def export_csv():
     """Every receipt and item as CSV bytes (one row per item), for backups. Always fresh, not cached."""
     receipts = _fetch_all(
-        lambda: client().table("receipts").select("*, items(name, category, price)")
+        lambda: client().table("receipts").select(f"*, items({_item_fields('name', 'category', 'price')})")
         .order("purchased_on").order("created_at").order("id")
     )
     buf = io.StringIO()
@@ -95,8 +115,9 @@ def export_csv():
     for r in receipts:
         receipt = [r["id"], r["purchased_on"], _csv_text(r["store"]), "" if r["total"] is None else r["total"],
                    _csv_text(r["uploaded_by"]), r["created_at"], _csv_text(r.get("updated_by")), r.get("updated_at") or ""]
-        for item in r["items"] or [{"name": "", "category": "", "price": ""}]:
-            writer.writerow(receipt + [_csv_text(item["name"]), _csv_text(item["category"]), item["price"]])
+        for item in r["items"] or [{"name": "", "category": "", "price": "", "quantity": ""}]:
+            writer.writerow(receipt + [_csv_text(item["name"]), _csv_text(item["category"]), item["price"],
+                                       item.get("quantity", 1)])
     return buf.getvalue().encode("utf-8-sig")  # BOM so Excel shows umlauts correctly
 
 

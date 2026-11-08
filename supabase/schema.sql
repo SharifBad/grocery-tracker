@@ -26,6 +26,9 @@ create table if not exists items (
   price      numeric(10,2) not null           -- may be negative for discounts
 );
 
+-- How many were bought on that line (pieces, or kg for weighed items); price is the line total.
+alter table items add column if not exists quantity numeric(10,3) not null default 1 check (quantity > 0);
+
 create index if not exists receipts_purchased_on_idx on receipts (purchased_on);
 create index if not exists items_receipt_id_idx on items (receipt_id);
 
@@ -56,7 +59,7 @@ revoke all on category_memory, budgets from anon, authenticated;
 -- One row per item with its receipt's date/store/uploader: what the dashboard reads.
 create or replace view item_lines with (security_invoker = true) as
 select i.id as item_id, i.receipt_id, r.purchased_on, r.store, r.uploaded_by,
-       i.name, i.category, i.price
+       i.name, i.category, i.price, i.quantity
 from items i
 join receipts r on r.id = i.receipt_id;
 
@@ -97,11 +100,12 @@ begin
     delete from items where receipt_id = rid;
   end if;
 
-  insert into items (receipt_id, name, category, price)
+  insert into items (receipt_id, name, category, price, quantity)
   select rid,
          coalesce(nullif(trim(i->>'name'), ''), 'Item'),
          coalesce(nullif(trim(i->>'category'), ''), 'Other'),
-         coalesce((i->>'price')::numeric, 0)
+         coalesce((i->>'price')::numeric, 0),
+         case when (i->>'quantity')::numeric > 0 then (i->>'quantity')::numeric else 1 end
   from jsonb_array_elements(p_items) as i;
 
   return rid;

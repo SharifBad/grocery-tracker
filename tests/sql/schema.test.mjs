@@ -79,6 +79,13 @@ const priv = (await db.query(`select
   (select relrowsecurity from pg_class where relname='items') f`)).rows[0];
 ok(!priv.a && !priv.b && priv.c && !priv.d && priv.e && priv.f, "only service_role can call save_receipt; RLS on; anon can't read the view");
 
+// quantity: defaults to 1, kept when given, bad values fall back to 1
+const qid = await save({ purchased_on: "2026-11-05", store: "Lidl", total: 3.07 },
+  [{ name: "JOGHURT", category: "Dairy & Eggs", price: 1.78, quantity: 2 }, { name: "BANANEN", category: "Fruit", price: 0.99, quantity: 0.512 },
+   { name: "BROT", category: "Bakery", price: 0.30 }, { name: "X", category: "Other", price: 0, quantity: -3 }], "Bibi");
+const qrows = Object.fromEntries((await db.query("select name, quantity from item_lines where receipt_id=$1", [qid])).rows.map((r) => [r.name, r.quantity]));
+ok(qrows.JOGHURT === "2.000" && qrows.BANANEN === "0.512" && qrows.BROT === "1.000" && qrows.X === "1.000", "quantity stored (default 1, weights kept, invalid -> 1)");
+
 // category memory + budgets
 await db.query("insert into category_memory (name_key, category, updated_by) values ('haferfl zart', 'Pantry', 'Bibi') on conflict (name_key) do update set category = excluded.category");
 await db.query("insert into category_memory (name_key, category, updated_by) values ('haferfl zart', 'Bakery', 'Dad') on conflict (name_key) do update set category = excluded.category");
