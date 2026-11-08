@@ -29,6 +29,10 @@ create table if not exists items (
 -- How many were bought on that line (pieces, or kg for weighed items); price is the line total.
 alter table items add column if not exists quantity numeric(10,3) not null default 1 check (quantity > 0);
 
+-- Who paid (a family member's name). Usually the uploader, but one can log a receipt for someone else.
+alter table receipts add column if not exists paid_by text;
+update receipts set paid_by = uploaded_by where paid_by is null;
+
 create index if not exists receipts_purchased_on_idx on receipts (purchased_on);
 create index if not exists items_receipt_id_idx on items (receipt_id);
 
@@ -56,10 +60,11 @@ alter table category_memory enable row level security;
 alter table budgets enable row level security;
 revoke all on category_memory, budgets from anon, authenticated;
 
--- One row per item with its receipt's date/store/uploader: what the dashboard reads.
+-- One row per item with its receipt's date/store/uploader/payer: what the dashboard reads.
+-- New columns go at the end: "create or replace view" can only append.
 create or replace view item_lines with (security_invoker = true) as
 select i.id as item_id, i.receipt_id, r.purchased_on, r.store, r.uploaded_by,
-       i.name, i.category, i.price, i.quantity
+       i.name, i.category, i.price, i.quantity, coalesce(r.paid_by, r.uploaded_by) as paid_by
 from items i
 join receipts r on r.id = i.receipt_id;
 
@@ -75,12 +80,13 @@ declare
   rid uuid;
 begin
   if p_id is null then
-    insert into receipts (purchased_on, store, total, uploaded_by)
+    insert into receipts (purchased_on, store, total, uploaded_by, paid_by)
     values (
       (p_receipt->>'purchased_on')::date,
       coalesce(nullif(trim(p_receipt->>'store'), ''), 'Unknown Store'),
       (p_receipt->>'total')::numeric,
-      p_user
+      p_user,
+      coalesce(nullif(trim(p_receipt->>'paid_by'), ''), p_user)  -- default: whoever adds it paid
     )
     returning id into rid;
   else
@@ -88,6 +94,7 @@ begin
       purchased_on = (p_receipt->>'purchased_on')::date,
       store        = coalesce(nullif(trim(p_receipt->>'store'), ''), 'Unknown Store'),
       total        = (p_receipt->>'total')::numeric,
+      paid_by      = coalesce(nullif(trim(p_receipt->>'paid_by'), ''), paid_by, uploaded_by),
       updated_by   = p_user,
       updated_at   = now()
     where id = p_id

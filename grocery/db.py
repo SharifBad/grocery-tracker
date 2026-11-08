@@ -9,21 +9,30 @@ from supabase import create_client
 from grocery.utils import looks_like_duplicate, normalize_category
 
 PAGE_SIZE = 1000  # PostgREST's default max rows per request
-ITEM_COLUMNS = ["item_id", "receipt_id", "purchased_on", "store", "uploaded_by", "name", "category", "price", "quantity"]
+ITEM_COLUMNS = ["item_id", "receipt_id", "purchased_on", "store", "uploaded_by", "name", "category", "price",
+                "quantity", "paid_by"]
 
 
 @st.cache_resource(ttl=600)
-def _has_quantity():
-    """Does the database have items.quantity yet? (Added later: re-run supabase/schema.sql.)
+def _has_column(table, column):
+    """Does the database have this column yet? (Columns added later need supabase/schema.sql re-run.)
 
-    Checked at most every 10 minutes, so the app works before the schema is updated (quantity 1)
-    and picks the column up soon after.
+    Checked at most every 10 minutes, so the app works before the schema is updated (quantity 1,
+    the uploader paid) and picks the column up soon after.
     """
     try:
-        client().table("items").select("quantity").limit(1).execute()
+        client().table(table).select(column).limit(1).execute()
         return True
     except Exception:
         return False
+
+
+def _has_quantity():
+    return _has_column("items", "quantity")
+
+
+def _has_paid_by():
+    return _has_column("receipts", "paid_by")
 
 
 def _item_fields(*fields):
@@ -56,8 +65,9 @@ def _invalidate():
 # --- Reads (cached; every write calls _invalidate) ---
 @st.cache_data(ttl=60, show_spinner=False)
 def load_item_lines():
-    """Every item with its receipt's date/store/uploader, as a DataFrame."""
-    columns = ITEM_COLUMNS if _has_quantity() else ITEM_COLUMNS[:-1]
+    """Every item with its receipt's date/store/uploader/payer, as a DataFrame."""
+    missing = {"quantity": not _has_quantity(), "paid_by": not _has_paid_by()}
+    columns = [c for c in ITEM_COLUMNS if not missing.get(c)]
     rows = _fetch_all(
         lambda: client().table("item_lines").select(",".join(columns)).order("purchased_on").order("item_id")
     )
@@ -65,6 +75,7 @@ def load_item_lines():
     df["purchased_on"] = pd.to_datetime(df["purchased_on"]).dt.date
     df["price"] = pd.to_numeric(df["price"]).fillna(0.0)
     df["quantity"] = pd.to_numeric(df["quantity"]).fillna(1.0)
+    df["paid_by"] = df["paid_by"].fillna(df["uploaded_by"])
     df["category"] = df["category"].map(normalize_category)  # receipts saved with earlier category names
     return df
 
@@ -99,7 +110,7 @@ def _csv_text(value):
     return "'" + text if text[:1] in ("=", "+", "-", "@", "\t", "\r") else text
 
 
-EXPORT_COLUMNS = ["receipt_id", "date", "store", "receipt_total", "added_by", "added_at",
+EXPORT_COLUMNS = ["receipt_id", "date", "store", "receipt_total", "paid_by", "added_by", "added_at",
                   "edited_by", "edited_at", "item", "category", "price", "quantity"]
 
 
@@ -114,19 +125,24 @@ def export_csv():
     writer.writerow(EXPORT_COLUMNS)
     for r in receipts:
         receipt = [r["id"], r["purchased_on"], _csv_text(r["store"]), "" if r["total"] is None else r["total"],
-                   _csv_text(r["uploaded_by"]), r["created_at"], _csv_text(r.get("updated_by")), r.get("updated_at") or ""]
+                   _csv_text(paid_by(r)), _csv_text(r["uploaded_by"]), r["created_at"], _csv_text(r.get("updated_by")), r.get("updated_at") or ""]
         for item in r["items"] or [{"name": "", "category": "", "price": "", "quantity": ""}]:
             writer.writerow(receipt + [_csv_text(item["name"]), _csv_text(item["category"]), item["price"],
                                        item.get("quantity", 1)])
     return buf.getvalue().encode("utf-8-sig")  # BOM so Excel shows umlauts correctly
 
 
+def paid_by(receipt):
+    """Who paid for a receipt from load_receipts: the uploader unless someone logged it for another."""
+    return receipt.get("paid_by") or receipt["uploaded_by"]
+
+
 # --- Writes ---
 def save_receipt(receipt, items, user, receipt_id=None):
     """Create (receipt_id None) or update a receipt and replace its items atomically. Returns its id.
 
-    receipt: {purchased_on: date, store: str, total: float | None}
-    items:   [{name, category, price}]
+    receipt: {purchased_on: date, store: str, total: float | None, paid_by: str | None (default: user)}
+    items:   [{name, category, price, quantity}]
     """
     payload = {
         "p_receipt": {**receipt, "purchased_on": receipt["purchased_on"].isoformat()},
