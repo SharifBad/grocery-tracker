@@ -116,7 +116,8 @@ if values_key not in st.session_state:
         "purchased_on": pd.to_datetime(r["purchased_on"]).date(),
         "store": r["store"],
         "total": float(r["total"]) if r["total"] is not None else None,
-        "items": [{k: i[k] for k in ("name", "category", "price")} for i in r["items"]],
+        "items": [{"name": i["name"], "category": i["category"], "price": i["price"], "quantity": i.get("quantity") or 1}
+                  for i in r["items"]],
     }
 edited = receipt_editor(f"edit_{rid}_{rev}", st.session_state[values_key], stores=store_options(item_lines["store"].unique()))
 

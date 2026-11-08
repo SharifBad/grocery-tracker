@@ -14,7 +14,7 @@ from grocery.utils import canonical_store, month_label, normalize_category, pret
 
 log = logging.getLogger(__name__)
 
-ITEM_FIELDS = ["name", "category", "price"]
+ITEM_FIELDS = ["name", "category", "price", "quantity"]  # Qty last: price stays on screen on phones
 
 
 def euro(x, signed=False):
@@ -108,7 +108,8 @@ def month_picker(item_lines, key):
 
 def items_frame(records):
     df = pd.DataFrame(records, columns=ITEM_FIELDS)
-    return df.astype({"name": "object", "category": "object", "price": "float64"})
+    df["quantity"] = df["quantity"].fillna(1.0)  # items saved before quantities existed
+    return df.astype({"name": "object", "quantity": "float64", "category": "object", "price": "float64"})
 
 
 def store_options(used=()):
@@ -156,8 +157,13 @@ def receipt_editor(key, values, stores=None):
         width="stretch",
         column_config={
             "name": st.column_config.TextColumn("Item", required=True),
+            "quantity": st.column_config.NumberColumn(
+                "Qty", min_value=0.001, step=0.001, default=1, format="plain", width="small",
+                help="How many (or kg for weighed items). The price is for the whole line.",
+            ),
             "category": st.column_config.SelectboxColumn("Category", options=CATEGORIES, required=True, default="Other"),
-            "price": st.column_config.NumberColumn("Price (€)", format="€%.2f", step=0.01, required=True),
+            "price": st.column_config.NumberColumn("Price (€)", format="€%.2f", step=0.01, required=True,
+                                                   help="What the whole line cost."),
         },
     )
 
@@ -167,7 +173,8 @@ def receipt_editor(key, values, stores=None):
         if not name:
             continue
         price = 0.0 if pd.isna(row["price"]) else round(float(row["price"]), 2)
-        clean.append({"name": name, "category": normalize_category(row["category"]), "price": price})
+        quantity = 1.0 if pd.isna(row["quantity"]) or float(row["quantity"]) <= 0 else round(float(row["quantity"]), 3)
+        clean.append({"name": name, "category": normalize_category(row["category"]), "price": price, "quantity": quantity})
 
     values.update(purchased_on=purchased_on, store=store, total=total, items=clean)
     items_sum = round(sum(i["price"] for i in clean), 2)

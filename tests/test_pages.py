@@ -284,3 +284,12 @@ def test_dashboard_spending_by_store(store):
     assert by_store["store"].tolist() == ["REWE", "Lidl"]
     assert by_store["spent"].tolist() == [50.0, 10.0] and by_store["receipts"].tolist() == [2, 1]
     assert abs(by_store["share"].iloc[0] - 50 / 60) < 1e-9
+
+
+def test_review_table_has_a_quantity_column_and_saves_it(store):
+    at = no_exc(with_draft("Bibi", total=1.78, items=[{"name": "JOGHURT", "category": "Dairy & Eggs", "price": 1.78, "quantity": 2}]).run())
+    editor = at.dataframe[0]
+    assert "Qty" in str(editor.proto) and editor.value["quantity"].tolist() == [2.0]
+    button(at, "Save receipt").click().run()
+    (saved,) = store.values()
+    assert saved["items"][0]["quantity"] == 2
