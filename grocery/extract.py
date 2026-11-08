@@ -41,13 +41,14 @@ Read this grocery receipt and extract it.
 - date: YYYY-MM-DD, or null if not printed. store: the shop name. total: the amount paid.
 - items: one per purchased line. name: exactly as printed. price: what was paid for the line
   (after line discounts); a discount not tied to an item is its own item "Discount", negative, Other.
+  q: quantity, ONLY if the line shows one (2 Stk x 0,89 -> 2; 0,512 kg -> 0.512); omit otherwise.
 - category guide: Vegetables incl. salad, potatoes, herbs. Meat & Fish incl. sausage, cold cuts.
   Bakery: bread, toast, crispbread, cakes. Pantry: pasta, rice, flour, muesli, cans, oil, spices,
   sauces, coffee, tea. Snacks & Sweets: chips, nuts, chocolate, biscuits, ice cream. Frozen: not ice
   cream. Cleaning & Household: detergent, toilet paper, bin bags. Skin & Body Care: cosmetics,
   shampoo, toothpaste. Health: medicine, plasters. Other: Pfand (Leergut returns negative), bags.
 Skip subtotal, tax, payment and change lines.
-JSON keys: d=date, s=store, t=total, i=items; per item n=name, c=category, p=price.
+JSON keys: d=date, s=store, t=total, i=items; per item n=name, c=category, p=price, q=quantity.
 """
 
 
@@ -57,6 +58,7 @@ class ExtractedItem(BaseModel):
     name: str = Field(alias="n")
     category: Literal[tuple(CATEGORIES)] = Field(alias="c")  # type: ignore[valid-type]
     price: float = Field(alias="p")
+    quantity: float | None = Field(None, alias="q")  # pieces or kg; None = 1 (saves tokens)
 
     @field_validator("category", mode="before")
     @classmethod
@@ -143,7 +145,7 @@ def _read(parts, media_resolution, on_progress):
 
 
 def extract_receipt(data, mime=None, on_progress=None):
-    """Return {date, date_guessed, store, total, items: [{name, category, price}], tokens}.
+    """Return {date, date_guessed, store, total, items: [{name, category, price, quantity}], tokens}.
 
     `data` is one file's bytes (with `mime`), or a list of (bytes, mime) for a long receipt
     photographed in up to MAX_PARTS parts, read together in one call.
@@ -176,7 +178,8 @@ def extract_receipt(data, mime=None, on_progress=None):
         "store": canonical_store(parsed.store),
         "total": round(parsed.total, 2) if parsed.total is not None else None,
         "items": [
-            {"name": i.name.strip(), "category": normalize_category(i.category), "price": round(i.price, 2)}
+            {"name": i.name.strip(), "category": normalize_category(i.category), "price": round(i.price, 2),
+             "quantity": round(i.quantity, 3) if i.quantity and i.quantity > 0 else 1}
             for i in parsed.items
         ],
         "tokens": tokens,

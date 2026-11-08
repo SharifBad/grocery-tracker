@@ -39,7 +39,7 @@ def test_schema_uses_one_letter_keys_and_category_enum():
     schema = _transformers.t_schema(Client(api_key="x")._api_client, extract.ExtractedReceipt)
     assert list(schema.properties) == ["d", "s", "t", "i"]
     item = schema.properties["i"].items
-    assert list(item.properties) == ["n", "c", "p"] and item.properties["c"].enum == CATEGORIES
+    assert list(item.properties) == ["n", "c", "p", "q"] and item.properties["c"].enum == CATEGORIES
 
 
 def test_cheap_settings_and_single_call_when_items_add_up():
@@ -47,7 +47,8 @@ def test_cheap_settings_and_single_call_when_items_add_up():
     (config,) = configs
     assert config.media_resolution == types.MediaResolution.MEDIA_RESOLUTION_LOW
     assert config.thinking_config.thinking_level == types.ThinkingLevel.LOW
-    assert out["items"] == [{"name": "MILCH", "category": "Dairy & Eggs", "price": 1.0}, {"name": "BROT", "category": "Bakery", "price": 2.0}]
+    assert out["items"] == [{"name": "MILCH", "category": "Dairy & Eggs", "price": 1.0, "quantity": 1},
+                            {"name": "BROT", "category": "Bakery", "price": 2.0, "quantity": 1}]
     assert out["total"] == 3.0 and out["tokens"] == 1000 and not notes
 
 
@@ -116,3 +117,12 @@ def test_unparseable_answer_is_a_friendly_error():
 def test_unknown_category_falls_back_to_other_instead_of_failing():
     out, _, _ = run(GOOD.replace('"c":"Bakery"', '"c":"Garden"'))
     assert [i["category"] for i in out["items"]] == ["Dairy & Eggs", "Other"]
+
+
+def test_quantity_is_read_when_shown_and_defaults_to_one():
+    answer = ('{"d":"2026-11-03","s":"Lidl","t":3.29,"i":[{"n":"JOGHURT","c":"Dairy & Eggs","p":1.78,"q":2},'
+              '{"n":"BANANEN","c":"Fruit","p":1.02,"q":0.512},{"n":"BROT","c":"Bakery","p":0.49},'
+              '{"n":"X","c":"Other","p":0.0,"q":0}]}')
+    out, _, _ = run(answer)
+    assert [i["quantity"] for i in out["items"]] == [2, 0.512, 1, 1]
+    assert "q=quantity" in extract.PROMPT
