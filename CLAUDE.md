@@ -26,7 +26,7 @@
 ## Data model (Supabase Postgres)
 
 - `receipts`: id, purchased_on, store, total (nullable), uploaded_by (family member's name), created_at, updated_by, updated_at.
-- `items`: id, receipt_id → receipts (on delete cascade), name, category, price. Price may be negative for discounts.
+- `items`: id, receipt_id → receipts (on delete cascade), name, category, price, quantity. Price is the **line total** and may be negative for discounts. Quantity is pieces, or kg for weighed items; it defaults to 1 and must be > 0.
 - `item_lines` view: items joined with their receipt's date, store and uploader. The dashboard reads this.
 - **All writes go through `save_receipt(p_receipt, p_items, p_user, p_id)`.** It creates the receipt, or updates it and replaces its items, in one transaction. Don't insert into the tables separately.
 - Week and month are computed in Python from `purchased_on`, not stored. Weeks use the ISO year (`week_label`).
@@ -102,6 +102,13 @@ Measured 2026-11-06 with gemini-3.8-flash on simulated phone photos of 25- and 4
   - Verified in a Cloud simulation (sandboxed same-origin iframe, server blind to cookies) in Chromium and WebKit/iPhone: staying signed in, sign-out, and no reload loop.
 - **Long receipts**: up to `extract.MAX_PARTS` (3) photos per receipt, each with its own turn, tilt and crop, switched with "Part 1/2/3". All parts are sent in one Gemini call, plus a note to list overlapping items once; the note is only added for 2+ parts. A PDF is read on its own.
 - **After deploying these:** re-run `supabase/schema.sql` in Supabase to create `category_memory` and `budgets`. It's safe to re-run.
+
+## Quantities
+
+- Gemini writes `q` **only** when a line shows a quantity ("2 Stk x 0,89" → 2, "0,512 kg x 2,99 EUR/kg" → 0.512); otherwise it's 1. This costs ~20 prompt tokens plus a few per quantity line. Live check (2026-11-08), 25-item receipt with 6 quantity lines: 25/25 right twice, ~1,190 tokens, 0 thinking.
+- The review table has a "Qty" column, placed **last** so Item, Category and Price stay on screen on phones. It uses `step=0.001` and `format="plain"`: with `step=1` it showed 0.74 kg as "0" and could round weights on edit.
+- The Prices page compares the **unit price** (`price / quantity`), so buying two isn't a price jump. Totals, budgets and the add-up check use the line price.
+- `db._has_quantity()` (cached 10 min) checks whether `items.quantity` exists. Until `schema.sql` is re-run, the app doesn't ask for the column and treats every quantity as 1, so deploying the code first doesn't break anything.
 
 ## Duplicates and backups
 
