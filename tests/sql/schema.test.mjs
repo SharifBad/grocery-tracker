@@ -100,6 +100,18 @@ ok((await db.query("select paid_by from item_lines where receipt_id=$1", [theirs
 await db.query("update receipts set paid_by = null where id=$1", [theirs]);
 ok((await db.query("select paid_by from item_lines where receipt_id=$1", [theirs])).rows[0].paid_by === "Bibi", "item_lines falls back to the uploader");
 
+// personal: off by default (for the family), can be switched on, kept on edit unless sent
+const fam = await save({ purchased_on: "2026-11-07", store: "dm", total: 5 }, [], "Bibi");
+const own = await save({ purchased_on: "2026-11-07", store: "H&M", total: 30, personal: true }, [{ name: "Shirt", category: "Clothes & Shoes", price: 30 }], "Bibi");
+ok((await receipt(fam)).personal === false && (await receipt(own)).personal === true, "personal defaults to false, can be set");
+await save({ purchased_on: "2026-11-07", store: "H&M", total: 30 }, [{ name: "Shirt", category: "Clothes & Shoes", price: 30 }], "Dad", own);
+ok((await receipt(own)).personal === true, "an edit without personal keeps it");
+await save({ purchased_on: "2026-11-07", store: "H&M", total: 30, personal: false }, [{ name: "Shirt", category: "Clothes & Shoes", price: 30 }], "Dad", own);
+ok((await receipt(own)).personal === false, "an edit can switch it off");
+ok((await db.query("select personal from item_lines where receipt_id=$1", [own])).rows[0].personal === false, "item_lines has personal");
+ok((await db.query("insert into receipts (purchased_on, store, uploaded_by) values ('2026-01-02','Older','x') returning personal")).rows[0].personal === false,
+  "receipts without the flag (e.g. from before) are for the family");
+
 // category memory + budgets
 await db.query("insert into category_memory (name_key, category, updated_by) values ('haferfl zart', 'Pantry', 'Bibi') on conflict (name_key) do update set category = excluded.category");
 await db.query("insert into category_memory (name_key, category, updated_by) values ('haferfl zart', 'Bakery', 'Dad') on conflict (name_key) do update set category = excluded.category");

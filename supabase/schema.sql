@@ -33,6 +33,9 @@ alter table items add column if not exists quantity numeric(10,3) not null defau
 alter table receipts add column if not exists paid_by text;
 update receipts set paid_by = uploaded_by where paid_by is null;
 
+-- Bought just for the payer themselves (not for the family). Shown per person on the dashboard.
+alter table receipts add column if not exists personal boolean not null default false;
+
 create index if not exists receipts_purchased_on_idx on receipts (purchased_on);
 create index if not exists items_receipt_id_idx on items (receipt_id);
 
@@ -64,7 +67,7 @@ revoke all on category_memory, budgets from anon, authenticated;
 -- New columns go at the end: "create or replace view" can only append.
 create or replace view item_lines with (security_invoker = true) as
 select i.id as item_id, i.receipt_id, r.purchased_on, r.store, r.uploaded_by,
-       i.name, i.category, i.price, i.quantity, coalesce(r.paid_by, r.uploaded_by) as paid_by
+       i.name, i.category, i.price, i.quantity, coalesce(r.paid_by, r.uploaded_by) as paid_by, r.personal
 from items i
 join receipts r on r.id = i.receipt_id;
 
@@ -80,13 +83,14 @@ declare
   rid uuid;
 begin
   if p_id is null then
-    insert into receipts (purchased_on, store, total, uploaded_by, paid_by)
+    insert into receipts (purchased_on, store, total, uploaded_by, paid_by, personal)
     values (
       (p_receipt->>'purchased_on')::date,
       coalesce(nullif(trim(p_receipt->>'store'), ''), 'Unknown Store'),
       (p_receipt->>'total')::numeric,
       p_user,
-      coalesce(nullif(trim(p_receipt->>'paid_by'), ''), p_user)  -- default: whoever adds it paid
+      coalesce(nullif(trim(p_receipt->>'paid_by'), ''), p_user),  -- default: whoever adds it paid
+      coalesce((p_receipt->>'personal')::boolean, false)
     )
     returning id into rid;
   else
@@ -95,6 +99,7 @@ begin
       store        = coalesce(nullif(trim(p_receipt->>'store'), ''), 'Unknown Store'),
       total        = (p_receipt->>'total')::numeric,
       paid_by      = coalesce(nullif(trim(p_receipt->>'paid_by'), ''), paid_by, uploaded_by),
+      personal     = coalesce((p_receipt->>'personal')::boolean, personal),
       updated_by   = p_user,
       updated_at   = now()
     where id = p_id

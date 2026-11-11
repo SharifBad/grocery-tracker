@@ -10,7 +10,7 @@ from grocery.utils import looks_like_duplicate, normalize_category
 
 PAGE_SIZE = 1000  # PostgREST's default max rows per request
 ITEM_COLUMNS = ["item_id", "receipt_id", "purchased_on", "store", "uploaded_by", "name", "category", "price",
-                "quantity", "paid_by"]
+                "quantity", "paid_by", "personal"]
 
 
 @st.cache_resource(ttl=600)
@@ -33,6 +33,10 @@ def _has_quantity():
 
 def _has_paid_by():
     return _has_column("receipts", "paid_by")
+
+
+def _has_personal():
+    return _has_column("receipts", "personal")
 
 
 def _item_fields(*fields):
@@ -66,7 +70,7 @@ def _invalidate():
 @st.cache_data(ttl=60, show_spinner=False)
 def load_item_lines():
     """Every item with its receipt's date/store/uploader/payer, as a DataFrame."""
-    missing = {"quantity": not _has_quantity(), "paid_by": not _has_paid_by()}
+    missing = {"quantity": not _has_quantity(), "paid_by": not _has_paid_by(), "personal": not _has_personal()}
     columns = [c for c in ITEM_COLUMNS if not missing.get(c)]
     rows = _fetch_all(
         lambda: client().table("item_lines").select(",".join(columns)).order("purchased_on").order("item_id")
@@ -76,6 +80,7 @@ def load_item_lines():
     df["price"] = pd.to_numeric(df["price"]).fillna(0.0)
     df["quantity"] = pd.to_numeric(df["quantity"]).fillna(1.0)
     df["paid_by"] = df["paid_by"].fillna(df["uploaded_by"])
+    df["personal"] = df["personal"].fillna(False).astype(bool)
     df["category"] = df["category"].map(normalize_category)  # receipts saved with earlier category names
     return df
 
@@ -110,7 +115,7 @@ def _csv_text(value):
     return "'" + text if text[:1] in ("=", "+", "-", "@", "\t", "\r") else text
 
 
-EXPORT_COLUMNS = ["receipt_id", "date", "store", "receipt_total", "paid_by", "added_by", "added_at",
+EXPORT_COLUMNS = ["receipt_id", "date", "store", "receipt_total", "paid_by", "just_for_payer", "added_by", "added_at",
                   "edited_by", "edited_at", "item", "category", "price", "quantity"]
 
 
@@ -125,7 +130,7 @@ def export_csv():
     writer.writerow(EXPORT_COLUMNS)
     for r in receipts:
         receipt = [r["id"], r["purchased_on"], _csv_text(r["store"]), "" if r["total"] is None else r["total"],
-                   _csv_text(paid_by(r)), _csv_text(r["uploaded_by"]), r["created_at"], _csv_text(r.get("updated_by")), r.get("updated_at") or ""]
+                   _csv_text(paid_by(r)), "yes" if is_personal(r) else "", _csv_text(r["uploaded_by"]), r["created_at"], _csv_text(r.get("updated_by")), r.get("updated_at") or ""]
         for item in r["items"] or [{"name": "", "category": "", "price": "", "quantity": ""}]:
             writer.writerow(receipt + [_csv_text(item["name"]), _csv_text(item["category"]), item["price"],
                                        item.get("quantity", 1)])
@@ -137,11 +142,17 @@ def paid_by(receipt):
     return receipt.get("paid_by") or receipt["uploaded_by"]
 
 
+def is_personal(receipt):
+    """Was it bought just for the person who paid (not for the family)? False before schema.sql is re-run."""
+    return bool(receipt.get("personal"))
+
+
 # --- Writes ---
 def save_receipt(receipt, items, user, receipt_id=None):
     """Create (receipt_id None) or update a receipt and replace its items atomically. Returns its id.
 
-    receipt: {purchased_on: date, store: str, total: float | None, paid_by: str | None (default: user)}
+    receipt: {purchased_on: date, store: str, total: float | None, paid_by: str | None (default: user),
+              personal: bool (just for the payer; default False)}
     items:   [{name, category, price, quantity}]
     """
     payload = {

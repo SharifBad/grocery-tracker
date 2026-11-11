@@ -20,13 +20,14 @@ def store(monkeypatch):
     receipts = {}
 
     def save_receipt(receipt, items, user, receipt_id=None):
-        assert set(receipt) <= {"purchased_on", "store", "total", "paid_by"}, receipt
+        assert set(receipt) <= {"purchased_on", "store", "total", "paid_by", "personal"}, receipt
         rid = receipt_id or str(uuid.uuid4())
         old = receipts.get(rid, {"uploaded_by": user, "created_at": f"{len(receipts):04d}"})
         paid_by = receipt.get("paid_by") or old.get("paid_by") or old["uploaded_by"]
         receipts[rid] = {
             **old, "id": rid, "purchased_on": receipt["purchased_on"].isoformat(),
             "store": receipt["store"] or "Unknown Store", "total": receipt["total"], "paid_by": paid_by,
+            "personal": bool(receipt.get("personal", old.get("personal", False))),
             "items": [dict(i, id=str(uuid.uuid4())) for i in items],
             "updated_by": user if receipt_id else None,
         }
@@ -36,7 +37,8 @@ def store(monkeypatch):
         rows = [
             {"item_id": i["id"], "receipt_id": r["id"], "purchased_on": datetime.date.fromisoformat(r["purchased_on"]),
              "store": r["store"], "uploaded_by": r["uploaded_by"], **{k: i[k] for k in ("name", "category", "price")},
-             "quantity": i.get("quantity") or 1, "paid_by": r.get("paid_by") or r["uploaded_by"]}
+             "quantity": i.get("quantity") or 1, "paid_by": r.get("paid_by") or r["uploaded_by"],
+             "personal": bool(r.get("personal"))}
             for r in receipts.values() for i in r["items"]
         ]
         return pd.DataFrame(rows, columns=db.ITEM_COLUMNS)

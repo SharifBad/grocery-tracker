@@ -16,7 +16,7 @@ from grocery import db
 LINE = {"item_id": "i", "receipt_id": "r", "purchased_on": "2026-11-01", "store": "Lidl",
         "uploaded_by": "Bibi", "name": "Milk", "category": "Dairy", "price": 1.5}
 RECEIPTS = [
-    {"id": "r1", "purchased_on": "2026-11-01", "store": "REWE Markt GmbH", "total": 3.0, "uploaded_by": "Bibi", "paid_by": "Dad",
+    {"id": "r1", "purchased_on": "2026-11-01", "store": "REWE Markt GmbH", "total": 3.0, "uploaded_by": "Bibi", "paid_by": "Dad", "personal": True,
      "created_at": "2026-11-01T10:00:00Z", "updated_by": None, "updated_at": None,
      "items": [{"name": "BUTTER", "category": "Dairy", "price": 2.0, "quantity": 2}, {"name": "BRÖTCHEN", "category": "Bakery", "price": 1.0, "quantity": 1},
                {"name": "=HYPERLINK(\"x\")", "category": "Other", "price": -0.5}]},
@@ -121,12 +121,12 @@ def test_export_csv_one_row_per_item_with_bom(supabase):
     assert data.startswith("﻿".encode())
     rows = list(csv.reader(io.StringIO(data.decode("utf-8-sig"))))
     assert rows[0] == db.EXPORT_COLUMNS
-    assert rows[1][:6] == ["r1", "2026-11-01", "REWE Markt GmbH", "3.0", "Dad", "Bibi"], "paid by Dad, added by Bibi"
-    assert rows[1][9:] == ["BUTTER", "Dairy", "2.0", "2"]
-    assert rows[2][9] == "BRÖTCHEN"
-    assert rows[3][9:] == ["'=HYPERLINK(\"x\")", "Other", "-0.5", "1"], "formula text escaped, negative price kept numeric"
-    assert rows[4][:6] == ["r2", "2026-11-01", "Aldi", "", "Dad", "Dad"], "no paid_by: the uploader paid"
-    assert rows[4][7] == "Bibi" and rows[4][9:] == ["", "", "", ""]
+    assert rows[1][:7] == ["r1", "2026-11-01", "REWE Markt GmbH", "3.0", "Dad", "yes", "Bibi"], "paid by Dad, just for him, added by Bibi"
+    assert rows[1][10:] == ["BUTTER", "Dairy", "2.0", "2"]
+    assert rows[2][10] == "BRÖTCHEN"
+    assert rows[3][10:] == ["'=HYPERLINK(\"x\")", "Other", "-0.5", "1"], "formula text escaped, negative price kept numeric"
+    assert rows[4][:7] == ["r2", "2026-11-01", "Aldi", "", "Dad", "", "Dad"], "no paid_by: the uploader paid; shared by default"
+    assert rows[4][8] == "Bibi" and rows[4][10:] == ["", "", "", ""]
     assert len(rows) == 5
 
 
@@ -177,3 +177,10 @@ def test_save_receipt_sends_paid_by(supabase):
     db.save_receipt({"purchased_on": datetime.date(2026, 11, 1), "store": "Lidl", "total": 1.0, "paid_by": "Dad"},
                     [], user="Bibi")
     assert json.loads(supabase[0][3])["p_receipt"]["paid_by"] == "Dad"
+
+
+def test_personal_flag_defaults_to_shared_and_waits_for_the_column(supabase):
+    df = db.load_item_lines()
+    assert "personal" in [q for (_, path, q, _) in supabase if path == "/rest/v1/item_lines"][0]["select"][0]
+    assert df["personal"].dtype == bool and not df["personal"].any(), "rows without it count as for the family"
+    assert db.is_personal(RECEIPTS[0]) and not db.is_personal(RECEIPTS[1])
