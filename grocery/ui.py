@@ -281,7 +281,7 @@ def _items_table(key, values):
 def receipt_editor(key, values, stores=None, user=None, family=()):
     """Editable receipt header + items table. Returns the cleaned values.
 
-    `values` ({purchased_on, store, total, paid_by, items}) is updated in place with every edit. Keep it in
+    `values` ({purchased_on, store, total, paid_by, personal, items}) is updated in place with every edit. Keep it in
     session state (like the upload draft) and edits survive the form going off screen, e.g. a
     visit to another page: Streamlit drops widget state then, and the form restarts from `values`.
     Widget keys are derived from `key`; pass a new key to reset the form to new data.
@@ -304,6 +304,12 @@ def receipt_editor(key, values, stores=None, user=None, family=()):
     # No minimum: refund receipts can have a negative total.
     total = c3.number_input("Receipt total (€)", value=values["total"], step=0.01, format="%.2f", key=f"{key}_total")
     paid_by = payer_picker(key, values, user, family) if user else values.get("paid_by")
+    personal = bool(values.get("personal"))
+    if user:
+        personal = st.toggle(
+            f"🔒 Just for {'me' if paid_by == user else paid_by}", value=personal, key=f"{key}_personal",
+            help="Bought for themselves, not for the family. The dashboard shows it separately for each person.",
+        )
 
     # Items: a list with a form per item (easy on phones) or the table (quick with a mouse).
     st.session_state[f"{key}_values"] = values  # the same dict, for the item form
@@ -326,7 +332,7 @@ def receipt_editor(key, values, stores=None, user=None, family=()):
         quantity = 1.0 if pd.isna(quantity) or float(quantity) <= 0 else round(float(quantity), 3)
         clean.append({"name": name, "category": normalize_category(row.get("category")), "price": price, "quantity": quantity})
 
-    values.update(purchased_on=purchased_on, store=store, total=total, paid_by=paid_by, items=clean)
+    values.update(purchased_on=purchased_on, store=store, total=total, paid_by=paid_by, personal=personal, items=clean)
     items_sum = round(sum(i["price"] for i in clean), 2)
     st.caption(f"{len(clean)} items · add up to {euro(items_sum)}")
     if total is not None and abs(items_sum - total) > 0.05:
@@ -340,6 +346,7 @@ def receipt_editor(key, values, stores=None, user=None, family=()):
         "store": store,
         "total": None if total is None else round(total, 2),
         "paid_by": paid_by,
+        "personal": personal,
         "items": clean,
     }
 

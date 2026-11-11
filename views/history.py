@@ -75,7 +75,7 @@ table = pd.DataFrame(
         "Store": [r["store"] for r in receipts],
         "Total": [r["total"] if r["total"] is not None else sum(i["price"] for i in r["items"]) for r in receipts],
         "Items": [len(r["items"]) for r in receipts],
-        "Paid by": [db.paid_by(r) for r in receipts],
+        "Paid by": [db.paid_by(r) + (" 🔒" if db.is_personal(r) else "") for r in receipts],
     }
 )
 # A new table key whenever the list of receipts changes, so a stale row selection is never reused.
@@ -107,6 +107,8 @@ st.subheader(f"{r['store']} · {r['purchased_on']}")
 meta = f"Added by {r['uploaded_by']}"
 if db.paid_by(r) != r["uploaded_by"]:
     meta += f" · paid by {db.paid_by(r)}"
+if db.is_personal(r):
+    meta += f" · 🔒 just for {db.paid_by(r)}"
 if r.get("updated_by"):
     meta += f" · last edited by {r['updated_by']}"
 st.caption(meta)
@@ -119,6 +121,7 @@ if values_key not in st.session_state:
         "store": r["store"],
         "total": float(r["total"]) if r["total"] is not None else None,
         "paid_by": db.paid_by(r),
+        "personal": db.is_personal(r),
         "items": [{"name": i["name"], "category": i["category"], "price": i["price"], "quantity": i.get("quantity") or 1}
                   for i in r["items"]],
     }
@@ -143,7 +146,7 @@ def failed(action):
 c1, c2 = st.columns([2, 1])
 if c1.button("💾 Save changes", key=f"save_{rid}", type="primary", disabled=not edited["items"], width="stretch"):
     try:
-        db.save_receipt({k: edited[k] for k in ("purchased_on", "store", "total", "paid_by")}, edited["items"],
+        db.save_receipt({k: edited[k] for k in ("purchased_on", "store", "total", "paid_by", "personal")}, edited["items"],
                         user=current_user(), receipt_id=rid)
     except Exception:
         failed("save")

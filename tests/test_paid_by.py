@@ -91,3 +91,61 @@ def test_dashboard_counts_spending_for_whoever_paid(store):
     no_exc(at)
     by_member = next(d.value for d in at.dataframe if "paid_by" in d.value.columns)
     assert dict(zip(by_member["paid_by"], by_member["price"])) == {"Dad": 30.0, "Bibi": 2.0}
+
+
+# --- "🔒 Just for me": bought for the payer themselves, not for the family ---
+
+def personal_toggle(at):
+    return next(t for t in at.toggle if "Just for" in t.label)
+
+
+def test_just_for_me_is_off_by_default(store):
+    at = no_exc(with_draft("Bibi").run())
+    assert personal_toggle(at).label == "🔒 Just for me" and personal_toggle(at).value is False
+    button(at, "Save receipt").click().run()
+    assert next(iter(store.values()))["personal"] is False, "by default a receipt is for the family"
+
+
+def test_just_for_me_is_saved_and_follows_the_payer(store):
+    at = no_exc(with_draft("Bibi").run())
+    personal_toggle(at).set_value(True).run()
+    toggle(at).set_value(False).run()  # Dad paid
+    assert personal_toggle(at).label == "🔒 Just for Dad" and personal_toggle(at).value is True
+    button(at, "Save receipt").click().run()
+    no_exc(at)
+    saved = next(iter(store.values()))
+    assert saved["personal"] is True and saved["paid_by"] == "Dad"
+    assert any("just for Dad" in s.value for s in at.success)
+
+
+def test_history_marks_and_keeps_personal_receipts(store):
+    from grocery import db
+
+    rid = db.save_receipt({"purchased_on": TODAY, "store": "H&M", "total": 30.0, "personal": True},
+                          [{"name": "SHIRT", "category": "Clothes & Shoes", "price": 30.0}], "Bibi")
+    at = history_app("Dad")
+    assert at.dataframe[0].value["Paid by"].tolist() == ["Bibi 🔒"]
+    select_history_row(at, 0)
+    assert personal_toggle(at).value is True and personal_toggle(at).label == "🔒 Just for Bibi"
+    assert any("just for Bibi" in c.value for c in at.caption)
+    button(at, "Save changes").click().run()
+    no_exc(at)
+    assert store[rid]["personal"] is True
+
+
+def test_dashboard_splits_family_and_personal_spending(store):
+    from grocery import db
+
+    db.save_receipt({"purchased_on": TODAY, "store": "REWE", "total": 50.0},
+                    [{"name": "EINKAUF", "category": "Pantry", "price": 50.0}], "Bibi")
+    db.save_receipt({"purchased_on": TODAY, "store": "H&M", "total": 30.0, "personal": True},
+                    [{"name": "SHIRT", "category": "Clothes & Shoes", "price": 30.0}], "Bibi")
+    db.save_receipt({"purchased_on": TODAY, "store": "Lidl", "total": 20.0, "paid_by": "Dad"},
+                    [{"name": "MILCH", "category": "Dairy & Eggs", "price": 20.0}], "Bibi")
+    at = make_app(user="Bibi")
+    at.run()
+    at.switch_page("views/dashboard.py").run()
+    no_exc(at)
+    t = next(d.value for d in at.dataframe if "own" in d.value.columns).set_index("paid_by")
+    assert t.loc["Bibi", ["price", "shared", "own"]].tolist() == [80.0, 50.0, 30.0]
+    assert t.loc["Dad", ["price", "shared", "own"]].tolist() == [20.0, 20.0, 0.0]

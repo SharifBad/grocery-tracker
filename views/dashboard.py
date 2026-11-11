@@ -128,16 +128,22 @@ else:
     )
 
     st.subheader("👪 By family member")
-    by_member = cur.groupby("paid_by", as_index=False)["price"].sum()
+    by_member = (
+        cur.assign(shared=cur["price"].where(~cur["personal"], 0.0), own=cur["price"].where(cur["personal"], 0.0))
+        .groupby("paid_by", as_index=False)[["price", "shared", "own"]].sum()
+    )
     by_member.insert(0, "photo", by_member["paid_by"].map(avatar_data_uri))
     st.dataframe(
         by_member.sort_values("price", ascending=False),
         hide_index=True,
         width="stretch",
+        column_order=["photo", "paid_by", "shared", "own", "price"],
         column_config={
             "photo": st.column_config.ImageColumn("", width="small"),
             "paid_by": "Paid by",
-            "price": st.column_config.NumberColumn("Spent (€)", format="€%.2f"),
+            "shared": st.column_config.NumberColumn("Family", format="€%.2f", help="Paid for the family"),
+            "own": st.column_config.NumberColumn("🔒 Own", format="€%.2f", help="Marked 🔒 Just for me"),
+            "price": st.column_config.NumberColumn("Total", format="€%.2f"),
         },
     )
 

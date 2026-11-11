@@ -32,7 +32,7 @@ if page_changed:
 def start_draft(**fields):
     st.session_state["draft_no"] = st.session_state.get("draft_no", 0) + 1  # fresh widget keys
     st.session_state[DRAFT] = {
-        "purchased_on": today(), "date_guessed": False, "store": "", "total": None, "paid_by": current_user(), "items": [],
+        "purchased_on": today(), "date_guessed": False, "store": "", "total": None, "paid_by": current_user(), "personal": False, "items": [],
         "files": [], "suggested": {}, "remembered": 0, **fields,
     }
 
@@ -156,7 +156,7 @@ b1, b2 = st.columns([2, 1])
 if b1.button("💾 Save receipt", type="primary", disabled=not receipt["items"], width="stretch"):
     try:
         db.save_receipt(
-            {k: receipt[k] for k in ("purchased_on", "store", "total", "paid_by")},
+            {k: receipt[k] for k in ("purchased_on", "store", "total", "paid_by", "personal")},
             receipt["items"],
             user=current_user(),
         )
@@ -166,7 +166,12 @@ if b1.button("💾 Save receipt", type="primary", disabled=not receipt["items"],
         st.stop()
     remember_corrections(draft["suggested"], receipt["items"])
     reset()
-    for_whom = f" (paid by {receipt['paid_by']})" if receipt["paid_by"] != current_user() else ""
+    notes, someone_else = [], receipt["paid_by"] != current_user()
+    if someone_else:
+        notes.append(f"paid by {receipt['paid_by']}")
+    if receipt["personal"]:
+        notes.append(f"🔒 just for {receipt['paid_by'] if someone_else else 'you'}")
+    for_whom = f" ({', '.join(notes)})" if notes else ""
     flash(f"Saved {len(receipt['items'])} items from {receipt['store'] or 'the receipt'}{for_whom} 🎉")
     st.rerun()
 if b2.button("Discard", width="stretch"):
