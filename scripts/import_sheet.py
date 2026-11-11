@@ -28,7 +28,7 @@ from supabase import create_client  # noqa: E402
 from grocery.utils import canonical_store, normalize_category, parse_money  # noqa: E402
 
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1xTZYrQlT9lVTfv6IMMCSE5zViVq-O7PhYd4zFBX0scE/edit"
-IMPORT_USER = "sheet-import"
+from grocery.config import IMPORT_USER  # noqa: E402,F401  (receipts imported here get this uploader)
 
 
 def read_sheet(secrets):

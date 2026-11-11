@@ -5,10 +5,10 @@ import pandas as pd
 import streamlit as st
 
 from grocery import db
-from grocery.auth import current_user
+from grocery.auth import current_user, family_members
 from grocery.config import CATEGORIES
 from grocery.ui import avatar_data_uri, database_errors, euro, flash, month_picker
-from grocery.utils import is_pfand, month_label, pretty_month, shift_month, spending_by_week, today
+from grocery.utils import is_pfand, month_label, person_label, pretty_month, shift_month, spending_by_week, today
 
 log = logging.getLogger(__name__)
 TOTAL = "TOTAL"  # budgets key for the overall monthly budget
@@ -128,13 +128,21 @@ else:
     )
 
     st.subheader("👪 By family member")
+    family = family_members()
     by_member = (
-        cur.assign(shared=cur["price"].where(~cur["personal"], 0.0), own=cur["price"].where(cur["personal"], 0.0))
+        cur.assign(
+            paid_by=cur["paid_by"].map(lambda n: person_label(n, family)),  # one row per person, whatever the spelling
+            shared=cur["price"].where(~cur["personal"], 0.0),
+            own=cur["price"].where(cur["personal"], 0.0),
+        )
         .groupby("paid_by", as_index=False)[["price", "shared", "own"]].sum()
     )
+    # Family members first (biggest total first), then anything else, e.g. receipts imported from the old sheet.
+    by_member["_outside"] = ~by_member["paid_by"].isin(family)
+    by_member = by_member.sort_values(["_outside", "price"], ascending=[True, False])
     by_member.insert(0, "photo", by_member["paid_by"].map(avatar_data_uri))
     st.dataframe(
-        by_member.sort_values("price", ascending=False),
+        by_member,
         hide_index=True,
         width="stretch",
         column_order=["photo", "paid_by", "shared", "own", "price"],
@@ -142,7 +150,7 @@ else:
             "photo": st.column_config.ImageColumn("", width="small"),
             "paid_by": "Paid by",
             "shared": st.column_config.NumberColumn("Family", format="€%.2f", help="Paid for the family"),
-            "own": st.column_config.NumberColumn("🔒 Own", format="€%.2f", help="Marked 🔒 Just for me"),
+            "own": st.column_config.NumberColumn("👤 Own", format="€%.2f", help="Receipts marked 👤 Just for me"),
             "price": st.column_config.NumberColumn("Total", format="€%.2f"),
         },
     )

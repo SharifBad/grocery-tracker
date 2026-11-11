@@ -75,7 +75,7 @@ table = pd.DataFrame(
         "Store": [r["store"] for r in receipts],
         "Total": [r["total"] if r["total"] is not None else sum(i["price"] for i in r["items"]) for r in receipts],
         "Items": [len(r["items"]) for r in receipts],
-        "Paid by": [db.paid_by(r) + (" 🔒" if db.is_personal(r) else "") for r in receipts],
+        "Paid by": [db.paid_by(r) + (" 👤" if db.is_personal(r) else "") for r in receipts],
     }
 )
 # A new table key whenever the list of receipts changes, so a stale row selection is never reused.
@@ -108,7 +108,7 @@ meta = f"Added by {r['uploaded_by']}"
 if db.paid_by(r) != r["uploaded_by"]:
     meta += f" · paid by {db.paid_by(r)}"
 if db.is_personal(r):
-    meta += f" · 🔒 just for {db.paid_by(r)}"
+    meta += f" · 👤 just for {db.paid_by(r)}"
 if r.get("updated_by"):
     meta += f" · last edited by {r['updated_by']}"
 st.caption(meta)

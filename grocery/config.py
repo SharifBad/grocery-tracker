@@ -74,3 +74,7 @@ DEFAULT_APP_URL = "https://cbecbczmjofch87t5gmwuf.streamlit.app/"
 # The family's time zone. Streamlit Cloud servers run on UTC, so "today" (default receipt date,
 # current month) must come from here, not from the server clock. See utils.today().
 TIMEZONE = "Europe/Berlin"
+
+# uploaded_by (and so paid_by) of receipts imported from the old Google Sheet by scripts/import_sheet.py
+IMPORT_USER = "sheet-import"
+IMPORTED_LABEL = "📄 Imported"

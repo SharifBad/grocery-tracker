@@ -4,7 +4,7 @@ import difflib
 import re
 from zoneinfo import ZoneInfo
 
-from grocery.config import CATEGORIES, CATEGORY_ALIASES, STORES, TIMEZONE
+from grocery.config import CATEGORIES, CATEGORY_ALIASES, IMPORT_USER, IMPORTED_LABEL, STORES, TIMEZONE
 
 _CATEGORY_LOOKUP = {**CATEGORY_ALIASES, **{c.lower(): c for c in CATEGORIES}}
 
@@ -56,6 +56,18 @@ def to_money(value):
 def normalize_category(value):
     """Map a category (any case, an alias, or an earlier name like 'Dairy') onto CATEGORIES; else 'Other'."""
     return _CATEGORY_LOOKUP.get(str(value or "").strip().lower(), "Other")
+
+
+def person_label(name, family):
+    """How a stored payer/uploader name is shown and grouped: one spelling per family member.
+
+    Names are matched to FAMILY ignoring case and spaces, so "shiqing " and "Shiqing" are one
+    person; receipts from the old Google Sheet import are labelled as imported.
+    """
+    text = str(name or "").strip()
+    if text == IMPORT_USER:
+        return IMPORTED_LABEL
+    return {str(n).strip().casefold(): str(n).strip() for n in family}.get(text.casefold(), text or "Unknown")
 
 
 def month_label(d):

@@ -97,14 +97,16 @@ def avatar(name):
 
 @st.cache_data(show_spinner=False)
 def avatar_data_uri(name, size=96):  # 96 px source for a ~32 px cell: sharp at 3x
-    """Small inline copy of the profile photo for table image columns (None if there is none)."""
+    """Small inline copy of the profile photo for table image columns.
+
+    Without a photo it is a transparent pixel: a table shows a missing image as the text "None".
+    """
     from PIL import Image
 
     path = avatar(name)
-    if not path:
-        return None
+    image = Image.open(path).resize((size, size), Image.Resampling.LANCZOS) if path else Image.new("RGBA", (1, 1))
     buf = io.BytesIO()
-    Image.open(path).resize((size, size), Image.Resampling.LANCZOS).save(buf, "PNG")
+    image.save(buf, "PNG")
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
@@ -307,7 +309,7 @@ def receipt_editor(key, values, stores=None, user=None, family=()):
     personal = bool(values.get("personal"))
     if user:
         personal = st.toggle(
-            f"🔒 Just for {'me' if paid_by == user else paid_by}", value=personal, key=f"{key}_personal",
+            f"👤 Just for {'me' if paid_by == user else paid_by}", value=personal, key=f"{key}_personal",
             help="Bought for themselves, not for the family. The dashboard shows it separately for each person.",
         )
 

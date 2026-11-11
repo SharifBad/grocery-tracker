@@ -93,7 +93,7 @@ def test_dashboard_counts_spending_for_whoever_paid(store):
     assert dict(zip(by_member["paid_by"], by_member["price"])) == {"Dad": 30.0, "Bibi": 2.0}
 
 
-# --- "🔒 Just for me": bought for the payer themselves, not for the family ---
+# --- "👤 Just for me": bought for the payer themselves, not for the family ---
 
 def personal_toggle(at):
     return next(t for t in at.toggle if "Just for" in t.label)
@@ -101,7 +101,7 @@ def personal_toggle(at):
 
 def test_just_for_me_is_off_by_default(store):
     at = no_exc(with_draft("Bibi").run())
-    assert personal_toggle(at).label == "🔒 Just for me" and personal_toggle(at).value is False
+    assert personal_toggle(at).label == "👤 Just for me" and personal_toggle(at).value is False
     button(at, "Save receipt").click().run()
     assert next(iter(store.values()))["personal"] is False, "by default a receipt is for the family"
 
@@ -110,7 +110,7 @@ def test_just_for_me_is_saved_and_follows_the_payer(store):
     at = no_exc(with_draft("Bibi").run())
     personal_toggle(at).set_value(True).run()
     toggle(at).set_value(False).run()  # Dad paid
-    assert personal_toggle(at).label == "🔒 Just for Dad" and personal_toggle(at).value is True
+    assert personal_toggle(at).label == "👤 Just for Dad" and personal_toggle(at).value is True
     button(at, "Save receipt").click().run()
     no_exc(at)
     saved = next(iter(store.values()))
@@ -124,9 +124,9 @@ def test_history_marks_and_keeps_personal_receipts(store):
     rid = db.save_receipt({"purchased_on": TODAY, "store": "H&M", "total": 30.0, "personal": True},
                           [{"name": "SHIRT", "category": "Clothes & Shoes", "price": 30.0}], "Bibi")
     at = history_app("Dad")
-    assert at.dataframe[0].value["Paid by"].tolist() == ["Bibi 🔒"]
+    assert at.dataframe[0].value["Paid by"].tolist() == ["Bibi 👤"]
     select_history_row(at, 0)
-    assert personal_toggle(at).value is True and personal_toggle(at).label == "🔒 Just for Bibi"
+    assert personal_toggle(at).value is True and personal_toggle(at).label == "👤 Just for Bibi"
     assert any("just for Bibi" in c.value for c in at.caption)
     button(at, "Save changes").click().run()
     no_exc(at)
@@ -149,3 +149,56 @@ def test_dashboard_splits_family_and_personal_spending(store):
     t = next(d.value for d in at.dataframe if "own" in d.value.columns).set_index("paid_by")
     assert t.loc["Bibi", ["price", "shared", "own"]].tolist() == [80.0, 50.0, 30.0]
     assert t.loc["Dad", ["price", "shared", "own"]].tolist() == [20.0, 20.0, 0.0]
+
+
+def test_person_label_merges_spellings_and_labels_imports():
+    from grocery.utils import person_label
+
+    family = ["Shiqing", "Charif"]
+    assert [person_label(n, family) for n in ("Shiqing", "shiqing ", "SHIQING", "Charif")] == ["Shiqing"] * 3 + ["Charif"]
+    assert person_label("sheet-import", family) == "📄 Imported" and person_label("Oma", family) == "Oma"
+    assert person_label(None, family) == "Unknown"
+
+
+def test_by_family_member_has_one_row_per_person_and_imports_last(store):
+    from grocery import db
+
+    for user, price, personal in [("sheet-import", 500.0, False), ("Bibi", 10.0, False), ("bibi", 20.0, True), ("Dad", 25.0, False)]:
+        db.save_receipt({"purchased_on": TODAY, "store": "REWE", "total": price, "personal": personal},
+                        [{"name": "X", "category": "Pantry", "price": price}], user)
+    at = make_app(user="Bibi")
+    at.run()
+    at.switch_page("views/dashboard.py").run()
+    no_exc(at)
+    t = next(d.value for d in at.dataframe if "own" in d.value.columns)
+    assert t["paid_by"].tolist() == ["Bibi", "Dad", "📄 Imported"], "family by total, imports last even though biggest"
+    assert t.set_index("paid_by").loc["Bibi", ["shared", "own", "price"]].tolist() == [10.0, 20.0, 30.0]
+
+
+def test_reading_again_keeps_who_paid_and_just_for_me(store, monkeypatch):
+    from unittest import mock
+
+    from grocery import extract
+
+    fake = {"date": TODAY, "date_guessed": False, "store": "REWE", "total": 1.0, "tokens": 900,
+            "items": [{"name": "MILCH", "category": "Dairy & Eggs", "price": 1.0, "quantity": 1}]}
+    monkeypatch.setattr(extract, "extract_receipt", mock.Mock(return_value=dict(fake)))
+    at = make_app(user="Bibi")
+    at.run()
+    at.file_uploader[0].set_value([("r.pdf", b"%PDF-1.4", "application/pdf")]).run()
+    button(at, "Read receipt").click().run()
+    no_exc(at)
+    toggle(at).set_value(False).run()
+    personal_toggle(at).set_value(True).run()
+    button(at, "Change the crop or read again").click().run()
+    monkeypatch.setattr(extract, "extract_receipt", mock.Mock(return_value=dict(fake)))
+    button(at, "Read again").click().run()
+    no_exc(at)
+    assert at.session_state["draft"]["paid_by"] == "Dad" and at.session_state["draft"]["personal"] is True
+    assert toggle(at).value is False and personal_toggle(at).value is True
+
+
+def test_people_without_a_profile_photo_get_an_empty_cell_not_none():
+    from grocery.ui import avatar_data_uri
+
+    assert avatar_data_uri("📄 Imported").startswith("data:image/png;base64,")
