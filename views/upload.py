@@ -108,7 +108,8 @@ if draft is None or st.session_state.get(PHOTO_OPEN):
         result["purchased_on"] = result.pop("date")
         result["remembered"] = apply_remembered_categories(result["items"])
         result["suggested"] = {item_key(i["name"]): i["category"] for i in result["items"]}
-        start_draft(**result, files=ready)
+        keep = {k: draft[k] for k in ("paid_by", "personal") if draft and k in draft}  # reading again keeps these
+        start_draft(**result, **keep, files=ready)
         st.session_state.pop(PHOTO_OPEN, None)
         st.rerun()
     if not draft and c2.button("✍️ Enter manually", width="stretch"):
@@ -170,7 +171,7 @@ if b1.button("💾 Save receipt", type="primary", disabled=not receipt["items"],
     if someone_else:
         notes.append(f"paid by {receipt['paid_by']}")
     if receipt["personal"]:
-        notes.append(f"🔒 just for {receipt['paid_by'] if someone_else else 'you'}")
+        notes.append(f"👤 just for {receipt['paid_by'] if someone_else else 'you'}")
     for_whom = f" ({', '.join(notes)})" if notes else ""
     flash(f"Saved {len(receipt['items'])} items from {receipt['store'] or 'the receipt'}{for_whom} 🎉")
     st.rerun()

@@ -13,11 +13,11 @@ ITEM_COLUMNS = ["item_id", "receipt_id", "purchased_on", "store", "uploaded_by",
                 "quantity", "paid_by", "personal"]
 
 
-@st.cache_resource(ttl=600)
+@st.cache_resource(ttl=60)
 def _has_column(table, column):
     """Does the database have this column yet? (Columns added later need supabase/schema.sql re-run.)
 
-    Checked at most every 10 minutes, so the app works before the schema is updated (quantity 1,
+    Checked at most once a minute, so the app works before the schema is updated (quantity 1,
     the uploader paid) and picks the column up soon after.
     """
     try:
