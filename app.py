@@ -1,11 +1,15 @@
 """Entry point: page config, family sign-in gate, and navigation. Pages live in views/."""
 import streamlit as st
 
-from grocery import db
-from grocery.auth import require_family_member, sign_out
-from grocery.config import FAVICON
-from grocery.ui import avatar, crisp_image
-from grocery.utils import today
+import code_refresh
+
+code_refresh.refresh()  # after a push on Streamlit Cloud: load the new grocery code (see code_refresh.py)
+
+from grocery import db  # noqa: E402
+from grocery.auth import require_family_member, sign_out  # noqa: E402
+from grocery.config import FAVICON  # noqa: E402
+from grocery.ui import avatar, crisp_image  # noqa: E402
+from grocery.utils import today  # noqa: E402
 
 st.set_page_config(page_title="Grocery Tracker", page_icon=str(FAVICON), layout="centered")
 
