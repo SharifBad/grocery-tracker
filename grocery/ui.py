@@ -2,6 +2,7 @@
 import base64
 import io
 import logging
+import re
 from contextlib import contextmanager
 from html import escape
 from pathlib import Path
@@ -10,7 +11,15 @@ import pandas as pd
 import streamlit as st
 
 from grocery.config import AVATARS, CATEGORIES, STORES
-from grocery.utils import canonical_store, month_label, normalize_category, pretty_month, today
+from grocery.utils import (
+    canonical_store,
+    month_label,
+    normalize_category,
+    parse_money,
+    parse_quantity,
+    pretty_month,
+    today,
+)
 
 log = logging.getLogger(__name__)
 
@@ -141,6 +150,134 @@ def payer_picker(key, values, user, family):
     return paid_by
 
 
+def _is_phone():
+    """Best guess from the browser's User-Agent; False when unknown (e.g. in tests)."""
+    try:
+        agent = st.context.headers.get("User-Agent") or ""
+    except Exception:
+        return False
+    return bool(re.search(r"Mobi|Android|iPhone|iPad", agent))
+
+
+def _md(text):
+    """Item names as plain text inside markdown (receipts print things like *, _ and #)."""
+    return re.sub(r"([\\`*_{}\[\]()#+\-.!|<>~:$])", r"\\\1", str(text))
+
+
+def _amount_text(price):
+    return f"{price:.2f}".replace(".", ",")
+
+
+def _quantity_text(quantity):
+    return format(float(quantity), "g").replace(".", ",")
+
+
+def _changed_items(key, items):
+    """Store items edited outside the table; the table rebuilds from them next time it is shown."""
+    st.session_state[f"{key}_values"]["items"] = items
+    st.session_state[f"{key}_items_rev"] = st.session_state.get(f"{key}_items_rev", 0) + 1
+
+
+ITEM_DIALOG = "item_dialog"  # (editor key, item index or None for a new item) while the item form is open
+
+
+def _close_item():
+    st.session_state.pop(ITEM_DIALOG, None)
+
+
+@st.dialog("Item", on_dismiss=_close_item)
+def _item_dialog(key, index):
+    """One item in a phone-sized form: big fields, a normal dropdown, comma decimals.
+
+    Whether it is open lives in session state (ITEM_DIALOG), so it survives full reruns.
+    """
+    values = st.session_state[f"{key}_values"]
+    items = list(values["items"])
+    item = items[index] if index is not None and index < len(items) else None
+    k = f"{key}_dlg{st.session_state.get(f'{key}_dlg_no', 0)}"
+    name = st.text_input("Item", item["name"] if item else "", key=f"{k}_name", placeholder="e.g. MILCH")
+    category = normalize_category(item["category"]) if item else "Other"
+    category = st.selectbox("Category", CATEGORIES, index=CATEGORIES.index(category), key=f"{k}_category")
+    row = st.container(horizontal=True)
+    price_text = row.text_input("Price (€)", _amount_text(item["price"]) if item else "", key=f"{k}_price",
+                                placeholder="1,99", help="What the whole line cost. Minus for discounts or Leergut.")
+    quantity_text = row.text_input("Qty", _quantity_text(item.get("quantity") or 1) if item else "1", key=f"{k}_qty",
+                                   help="How many, or kg for weighed items (0,512).")
+    price, quantity = parse_money(price_text), parse_quantity(quantity_text)
+    if price_text.strip() and price is None:
+        st.error("The price isn't a number. Write it like 1,99.")
+    if quantity is None:
+        st.error("The quantity must be a number above 0, like 2 or 0,512.")
+    ready = bool(name.strip()) and price is not None and quantity is not None
+    buttons = st.container(horizontal=True)
+    if buttons.button("✅ Done", type="primary", disabled=not ready, key=f"{k}_done"):
+        new = {"name": name.strip(), "category": category, "price": price, "quantity": quantity}
+        if item is None:
+            items.append(new)
+        else:
+            items[index] = new
+        _changed_items(key, items)
+        _close_item()
+        st.rerun()
+    if item is not None and buttons.button("🗑️ Remove", key=f"{k}_remove"):
+        del items[index]
+        _changed_items(key, items)
+        _close_item()
+        st.rerun()
+
+
+def _open_item(key, index):
+    st.session_state[f"{key}_dlg_no"] = st.session_state.get(f"{key}_dlg_no", 0) + 1  # fresh form fields
+    st.session_state[ITEM_DIALOG] = (key, index)
+
+
+def _items_list(key, items):
+    """Phone-friendly view of the items: one line each, ✏️ opens a form for that item."""
+    rev = st.session_state.get(f"{key}_items_rev", 0)
+    for i, item in enumerate(items):
+        row = st.container(horizontal=True, vertical_alignment="center", border=True, gap="small")
+        detail = item["category"] + (f" · ×{_quantity_text(item['quantity'])}" if item.get("quantity", 1) != 1 else "")
+        row.markdown(f"**{_md(item['name'])}**  \n:gray[{_md(detail)}]", width="stretch")
+        row.markdown(f"**{euro(item['price'])}**", width="content")
+        row.button("✏️", key=f"{key}_edit_{rev}_{i}", help="Edit or remove", on_click=_open_item, args=(key, i))
+    st.button("➕ Add item", key=f"{key}_add_{rev}", width="stretch", on_click=_open_item, args=(key, None))
+    if st.session_state.get("page_changed"):
+        _close_item()  # don't pop the form up again after a visit to another page
+    open_key, index = st.session_state.get(ITEM_DIALOG) or (None, None)
+    if open_key == key:
+        _item_dialog(key, index)
+
+
+def _items_table(key, values):
+    """The spreadsheet-style editor (best with a mouse). Returns the rows as dicts."""
+    # The data editor resets whenever its input data changes, so its input stays fixed while it is
+    # on screen and is refreshed from `values` only when the editor is created anew, or after the
+    # items were changed in the list view (a new rev, so a new key).
+    rev = st.session_state.get(f"{key}_items_rev", 0)
+    suffix = f"_{rev}" if rev else ""
+    items_key, base_key = f"{key}_items{suffix}", f"{key}_items_base{suffix}"
+    if items_key not in st.session_state or base_key not in st.session_state:
+        st.session_state[base_key] = list(values["items"])
+    edited = st.data_editor(
+        items_frame(st.session_state[base_key]),
+        key=items_key,
+        num_rows="dynamic",
+        hide_index=True,
+        width="stretch",
+        column_config={
+            "name": st.column_config.TextColumn("Item", required=True),
+            "quantity": st.column_config.NumberColumn(
+                "Qty", min_value=0.001, step=0.001, default=1, format="plain", width="small",
+                help="How many (or kg for weighed items). The price is for the whole line.",
+            ),
+            "category": st.column_config.SelectboxColumn("Category", options=CATEGORIES, required=True, default="Other"),
+            "price": st.column_config.NumberColumn("Price (€)", format="€%.2f", step=0.01, required=True,
+                                                   help="What the whole line cost."),
+        },
+    )
+    return edited.to_dict("records")
+
+
 def receipt_editor(key, values, stores=None, user=None, family=()):
     """Editable receipt header + items table. Returns the cleaned values.
 
@@ -168,37 +305,26 @@ def receipt_editor(key, values, stores=None, user=None, family=()):
     total = c3.number_input("Receipt total (€)", value=values["total"], step=0.01, format="%.2f", key=f"{key}_total")
     paid_by = payer_picker(key, values, user, family) if user else values.get("paid_by")
 
-    # The data editor resets whenever its input data changes, so its input stays fixed while it is
-    # on screen and is refreshed from `values` only when the editor is created anew.
-    items_key, base_key = f"{key}_items", f"{key}_items_base"
-    if items_key not in st.session_state or base_key not in st.session_state:
-        st.session_state[base_key] = list(values["items"])
-    edited = st.data_editor(
-        items_frame(st.session_state[base_key]),
-        key=items_key,
-        num_rows="dynamic",
-        hide_index=True,
-        width="stretch",
-        column_config={
-            "name": st.column_config.TextColumn("Item", required=True),
-            "quantity": st.column_config.NumberColumn(
-                "Qty", min_value=0.001, step=0.001, default=1, format="plain", width="small",
-                help="How many (or kg for weighed items). The price is for the whole line.",
-            ),
-            "category": st.column_config.SelectboxColumn("Category", options=CATEGORIES, required=True, default="Other"),
-            "price": st.column_config.NumberColumn("Price (€)", format="€%.2f", step=0.01, required=True,
-                                                   help="What the whole line cost."),
-        },
-    )
+    # Items: a list with a form per item (easy on phones) or the table (quick with a mouse).
+    st.session_state[f"{key}_values"] = values  # the same dict, for the item form
+    default_view = "list" if _is_phone() else "table"
+    view = st.segmented_control(
+        "Items", ["list", "table"], default=default_view, key="items_view",
+        format_func={"list": "📝 List", "table": "📊 Table"}.get,
+    ) or default_view
+    rows = _items_table(key, values) if view == "table" else values["items"]
+    if view == "list":
+        _items_list(key, values["items"])
 
     clean = []
-    for row in edited.to_dict("records"):
-        name = "" if pd.isna(row["name"]) else str(row["name"]).strip()
+    for row in rows:
+        name = "" if pd.isna(row.get("name")) else str(row["name"]).strip()
         if not name:
             continue
-        price = 0.0 if pd.isna(row["price"]) else round(float(row["price"]), 2)
-        quantity = 1.0 if pd.isna(row["quantity"]) or float(row["quantity"]) <= 0 else round(float(row["quantity"]), 3)
-        clean.append({"name": name, "category": normalize_category(row["category"]), "price": price, "quantity": quantity})
+        price = 0.0 if pd.isna(row.get("price")) else round(float(row["price"]), 2)
+        quantity = row.get("quantity")
+        quantity = 1.0 if pd.isna(quantity) or float(quantity) <= 0 else round(float(quantity), 3)
+        clean.append({"name": name, "category": normalize_category(row.get("category")), "price": price, "quantity": quantity})
 
     values.update(purchased_on=purchased_on, store=store, total=total, paid_by=paid_by, items=clean)
     items_sum = round(sum(i["price"] for i in clean), 2)

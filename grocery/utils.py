@@ -35,6 +35,18 @@ def parse_money(value):
         return None
 
 
+def parse_quantity(value):
+    """'2' -> 2.0, '0,512' -> 0.512 (comma or point), blank -> 1.0; None if it isn't a positive number."""
+    text = str(value if value is not None else "").strip()
+    if not text:
+        return 1.0
+    try:
+        quantity = round(float(re.sub(r"[^0-9,.]", "", text).replace(",", ".")), 3)
+    except ValueError:
+        return None
+    return quantity if quantity > 0 else None
+
+
 def to_money(value):
     """Like parse_money, but 0.0 when the value isn't a number."""
     parsed = parse_money(value)
