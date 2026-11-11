@@ -4,6 +4,7 @@
 
 ## Layout
 
+- `code_refresh.py`: reloads the `grocery` package after an in-place code update on Streamlit Cloud (see Robustness rules).
 - `app.py`: entry point. Sets page config and runs the sign-in gate (`require_family_member`). Navigation is `st.navigation(position="hidden")` plus a row of `st.page_link`s and a 👤 popover (backup, sign out) at the top of every page; the mobile sidebar stayed open over the page after each navigation. It also sets `st.session_state["page_changed"]` so pages can restore state after a visit elsewhere.
 - `views/`: one script per page. They are **not** in `pages/`, so Streamlit's automatic page discovery doesn't apply.
   - `upload.py`: two modes that are never on screen together. The **photo step** (upload, `photo_editor`, "Read with Gemini", or manual entry) and, once a draft exists, the **review step** (editor, Save). "📷 Change the crop or read again" sets `photo_open` to go back. The draft lives in `st.session_state["draft"]`. Don't put the cropper in a collapsed expander: it sizes itself to 0 px.
@@ -121,6 +122,7 @@ Measured 2026-11-06 with gemini-3.8-flash on simulated phone photos of 25- and 4
 
 ## Robustness rules (each fixed a real bug; keep them)
 
+- **Deploys:** Streamlit Cloud updates the files in place on a push and keeps the Python process running. Pages are re-run from the new files, but imported `grocery.*` modules stayed old, so a page using a name added in the same push failed (`ImportError: cannot import name 'person_label' from 'grocery.utils'`, 2026-11-11) until a reboot. `app.py` calls `code_refresh.refresh()` before importing `grocery`: if any file in the package changed since the last run, the grocery modules are dropped from `sys.modules` and imported fresh. It lives outside `grocery/` so it isn't dropped itself, and it only notices changes after it was first imported, so its own first deploy still needed one reboot.
 - **Dates:** use `utils.today()` (time zone `config.TIMEZONE`). The Streamlit Cloud server runs on UTC, so `datetime.date.today()` is yesterday between midnight and 1–2 a.m. in Germany.
 - **Off-screen widget state:** Streamlit drops it, so forms keep their values in session state. `ui.receipt_editor(key, values)` updates `values` in place and restores from it. `date_input`, `text_input` and `number_input` keep their identity by key, so passing the latest value is safe. The `data_editor` resets when its input changes, so its input is pinned in `<key>_items_base` and refreshed only when the editor is created anew.
 - **Refunds:** totals and prices can be negative. Don't put `min_value=0` on them; it crashed the form.
